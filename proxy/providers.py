@@ -9,16 +9,11 @@ import re
 import uuid
 from urllib.parse import quote, urljoin, urlparse
 import httpx
+from . import chatgpt_guest, official_apis
 from .chatgpt_models import model_catalog, select_model
+from .provider_types import OFFICIAL_APIS, ProviderError
 
 WORKER = "https://deepseek-pow.contact-3mh.workers.dev"
-
-
-class ProviderError(Exception):
-    def __init__(self, message, status=502):
-        self.message = message
-        self.status = status
-        super().__init__(message)
 
 
 def nested(value, *path, default=None):
@@ -125,6 +120,12 @@ class Providers:
 
     async def discover(self, account):
         provider = account["provider"]
+        if provider in OFFICIAL_APIS:
+            async with self.client() as client:
+                return await official_apis.discover(client, self.checked, account)
+        if provider == "chatgpt_guest":
+            async with self.client() as client:
+                return await chatgpt_guest.discover(client, self.checked)
         if provider == "chatgpt":
             models, projects, chats = await asyncio.gather(
                 self.gpt_get(account, "models"),
@@ -569,6 +570,16 @@ class Providers:
     async def send(self, account, prompt, state, settings, attachments=None):
         provider = account["provider"]
         attachments = attachments or []
+        if provider in OFFICIAL_APIS:
+            async with self.client() as client:
+                return await official_apis.send(
+                    client, self.checked, account, prompt, settings, attachments
+                )
+        if provider == "chatgpt_guest":
+            if attachments:
+                raise ProviderError("ChatGPT Guest يدعم النص فقط.", 400)
+            async with self.client() as client:
+                return await chatgpt_guest.send(client, self.checked, prompt, state)
         if provider == "chatgpt":
             state.pop("native_tools_used", None)
             state.pop("tool_route_corrected", None)
@@ -1034,6 +1045,8 @@ class Providers:
     async def upload(self, account, name, mime, data):
         if len(data) > 10 * 1024 * 1024:
             raise ProviderError("حجم المرفق يتجاوز 10 MB.", 413)
+        if account["provider"] in OFFICIAL_APIS:
+            return official_apis.upload(account, name, mime, data)
         if account["provider"] == "chatgpt":
             async with self.client() as client:
                 headers = await self.gpt_headers(account, client)

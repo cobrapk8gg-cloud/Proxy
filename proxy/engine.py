@@ -6,7 +6,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from .protocol import canonical, prompt_for, parse_tools, completion, content_text
-from .providers import ProviderError
+from .provider_types import OFFICIAL_APIS, ProviderError
 from .chatgpt_models import select_model
 from jsonschema import Draft202012Validator, SchemaError
 
@@ -204,6 +204,10 @@ class Engine:
                 raise ProviderError(str(exc), 400) from None
         messages = body["messages"]
         tools = body.get("tools") or []
+        if account["provider"] in OFFICIAL_APIS:
+            settings["_explicit_output_limit"] = any(
+                name in body for name in ("max_tokens", "max_completion_tokens")
+            )
         # Derived from the request, never from account settings or model-generated text.
         settings["_client_tools"] = bool(tools)
         # Per-request preferences override defaults, while project/account routing stays under dashboard control.
@@ -327,13 +331,15 @@ class Engine:
                 cached = self.store.remote_state(account["id"], fixed)
                 if cached:
                     state = cached
-            pending = (
-                messages[last_assistant + 1 :]
-                if conversation and last_assistant >= 0
-                else messages
+            replay_history = account["provider"] in OFFICIAL_APIS or (
+                account["provider"] == "chatgpt_guest"
+                and not state.get("conversation_id")
             )
-            # Repeat system/tool instructions; never replay the old user dialogue into a known remote chat.
-            if conversation:
+            pending = messages
+            if conversation and not replay_history:
+                if last_assistant >= 0:
+                    pending = messages[last_assistant + 1 :]
+                # Repeat system/tool instructions while keeping dialogue in the upstream chat.
                 pending = [
                     m for m in messages if m["role"] in ("system", "developer")
                 ] + pending

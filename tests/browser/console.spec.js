@@ -360,3 +360,26 @@ test("pending app updates never cover the phone login button", async ({
   await expect(page.locator("#app")).toBeVisible();
   await expect(page.locator("#update-banner")).toBeVisible();
 });
+
+test("API providers ask for keys and guest connects without credentials", async ({
+  page,
+}) => {
+  await navigate(page, "الحسابات والمزوّدون");
+  await page.getByRole("button", { name: "ربط حساب جديد" }).click();
+  const dialog = page.getByRole("dialog");
+  const credential = dialog.locator("textarea[name=credential]");
+
+  await dialog.getByRole("button", { name: "OpenAI API", exact: true }).click();
+  await expect(dialog.getByLabel("مفتاح OpenAI API")).toBeVisible();
+  await credential.fill("fixture-key-not-to-be-reused");
+  await dialog.getByRole("button", { name: "Gemini API", exact: true }).click();
+  await expect(dialog.getByLabel("مفتاح Gemini API")).toBeVisible();
+  await expect(credential).toHaveValue("");
+
+  await dialog.getByRole("button", { name: "ChatGPT Guest", exact: true }).click();
+  await expect(credential).toBeHidden();
+  await expect(credential).toBeDisabled();
+  await dialog.getByRole("button", { name: "حفظ وربط الحساب" }).click();
+  await expect(dialog.getByRole("heading", { name: "ChatGPT Guest" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "جلب المحادثات" })).toHaveCount(0);
+});

@@ -18,7 +18,8 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from .store import Store
-from .providers import Providers, ProviderError
+from .providers import Providers
+from .provider_types import NO_FIXED_CHAT, OFFICIAL_APIS, PROVIDER_INFO, ProviderError
 from .engine import Engine
 from .chatgpt_models import select_model
 from .protocol import (
@@ -299,12 +300,15 @@ def create_app(directory=None, providers=None):
     async def register(data, source, enabled):
         provider = data.get("provider")
         credential = str(data.get("credential", "")).strip()
-        if provider not in ("chatgpt", "gemini", "deepseek", "qwen"):
+        if not isinstance(provider, str) or provider not in PROVIDER_INFO:
             raise ApiError(400, "اختر مزوّدًا صالحًا.")
         if provider != "gemini":
             credential = re.sub(r"^Bearer\s+", "", credential, flags=re.I)
-        if len(credential) < 6 or len(credential) > 131072:
-            raise ApiError(400, "الصق توكن الحساب أو الكوكيز أولًا.")
+        if provider == "chatgpt_guest":
+            if credential:
+                raise ApiError(400, "ChatGPT Guest يعمل بدون بيانات دخول.")
+        elif not 6 <= len(credential) <= 131072:
+            raise ApiError(400, "أدخل بيانات جلسة المزوّد أو مفتاح API.")
         value = store.add_account(
             provider, credential, str(data.get("label", ""))[:80], source, enabled
         )
@@ -343,12 +347,7 @@ def create_app(directory=None, providers=None):
             store.update_account(aid, settings=settings)
         existing = [r for r in store.routes() if r["account_id"] == aid]
         if not existing and catalog.get("models"):
-            base = {
-                "chatgpt": "gpt",
-                "gemini": "gemini",
-                "deepseek": "deepseek-telegram",
-                "qwen": "qwen",
-            }[value["provider"]]
+            base = PROVIDER_INFO[value["provider"]][1]
             if any(r["id"] == base for r in store.routes()):
                 base += "-" + aid[:6]
             store.set_route(base, aid, {})
@@ -462,10 +461,11 @@ def create_app(directory=None, providers=None):
             "per_request",
         ):
             raise ApiError(400, "اختر سلوك محادثة صالحًا.")
-        if settings.get("conversation_mode") == "fixed" and not settings.get(
-            "conversation_id"
-        ):
-            raise ApiError(400, "اختر محادثة ثابتة أولًا.")
+        if settings.get("conversation_mode") == "fixed":
+            if value["provider"] in NO_FIXED_CHAT:
+                raise ApiError(400, "هذا المزوّد لا يدعم اختيار محادثة ثابتة.")
+            if not settings.get("conversation_id"):
+                raise ApiError(400, "اختر محادثة ثابتة أولًا.")
         if value["provider"] != "chatgpt" and settings.get("project_id"):
             raise ApiError(400, "المشاريع متاحة لحساب ChatGPT فقط.")
         if value["provider"] == "chatgpt":
@@ -501,6 +501,8 @@ def create_app(directory=None, providers=None):
     @app.post("/admin/api/accounts/{aid}/credentials")
     async def rotate_credentials(aid: str, request: Request, who=Depends(admin)):
         value = account(aid)
+        if value["provider"] == "chatgpt_guest":
+            raise ApiError(400, "ChatGPT Guest يعمل بدون بيانات دخول.")
         data = await body(request)
         credential = str(data.get("credential", "")).strip()
         if value["provider"] != "gemini":
@@ -525,7 +527,11 @@ def create_app(directory=None, providers=None):
             "conversation_id": "",
             "conversation_mode": "automatic",
             "chatgpt_mode": "chat",
-            "model": "",
+            "model": (
+                value["settings"].get("model", "")
+                if value["provider"] in OFFICIAL_APIS
+                else ""
+            ),
         }
         store.update_account(aid, settings=settings)
         for route in store.routes():
@@ -539,7 +545,11 @@ def create_app(directory=None, providers=None):
                         "conversation_id": "",
                         "conversation_mode": "automatic",
                         "chatgpt_mode": "chat",
-                        "model": "",
+                        "model": (
+                            route["config"].get("model", "")
+                            if value["provider"] in OFFICIAL_APIS
+                            else ""
+                        ),
                     },
                     bool(route["enabled"]),
                 )
@@ -580,6 +590,8 @@ def create_app(directory=None, providers=None):
     @app.post("/admin/api/accounts/{aid}/new-chat")
     async def new_chat(aid: str, request: Request, who=Depends(admin)):
         value = account(aid)
+        if value["provider"] in NO_FIXED_CHAT:
+            raise ApiError(400, "ابدأ هذه المحادثة من مختبر الدردشة أو تطبيق العميل.")
         data = await body(request)
         settings = {
             **value["settings"],
@@ -687,6 +699,11 @@ def create_app(directory=None, providers=None):
             value = account(route["account_id"])
             if not value["enabled"]:
                 continue
+            vision = value["provider"] in OFFICIAL_APIS or value["provider"] in (
+                "chatgpt",
+                "gemini",
+                "qwen",
+            )
             result.append(
                 {
                     "id": route["id"],
@@ -718,11 +735,10 @@ def create_app(directory=None, providers=None):
                         "chat",
                     ),
                     "supports_tools": True,
-                    "supports_vision": value["provider"]
-                    in ("chatgpt", "gemini", "qwen"),
+                    "supports_vision": vision,
                     "capabilities": {
                         "tools": "emulated",
-                        "vision": value["provider"] in ("chatgpt", "gemini", "qwen"),
+                        "vision": vision,
                         "parallel_tool_calls": True,
                         "responses_api": True,
                     },

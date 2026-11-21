@@ -19,6 +19,26 @@ const providers = {
     note: "جلسات الحساب · تفكير · بحث",
   },
   qwen: { name: "Qwen", mark: "Q", note: "محادثات · صور · أدوات" },
+  chatgpt_guest: {
+    name: "ChatGPT Guest",
+    mark: "◎",
+    note: "دردشة نصية · بدون بيانات دخول",
+    noFixedChat: true,
+  },
+  openai_api: {
+    name: "OpenAI API",
+    mark: "◎",
+    note: "مفتاح API · نماذج OpenAI",
+    apiKey: true,
+    noFixedChat: true,
+  },
+  gemini_api: {
+    name: "Gemini API",
+    mark: "✦",
+    note: "مفتاح API · نماذج Gemini",
+    apiKey: true,
+    noFixedChat: true,
+  },
 };
 const pages = [
   ["overview", "نظرة عامة", "grid"],
@@ -252,10 +272,10 @@ function accountsPage() {
     heading(
       "CONTROL / ACCOUNTS",
       "حساباتك<span>، بلا حدود.</span>",
-      "الصق التوكن أو الكوكيز؛ يجلب البروكسي النماذج والمشاريع والمحادثات للاختيار.",
+      "اربط مزوّدًا واختر من النماذج والإعدادات التي يتيحها.",
       button("ربط حساب جديد", "add-account", "gold"),
     ) +
-    `<div class="toolbar"><span class="filter-note">${state.accounts.length} حساب · ${state.accounts.filter((a) => a.source.startsWith("client:")).length} مسجل من التطبيقات</span><span class="badge neutral">ENCRYPTED CREDENTIAL VAULT</span></div><section class="cards">${state.accounts.map((a) => `<article class="account-card"><div class="card-top">${logo(a.provider)}${badge(a)}</div><h2>${esc(a.label)}</h2><p>${esc(providers[a.provider].note)}</p><div class="card-details"><div><small>نماذج الحساب</small><b>${a.catalog.models?.length || "—"}</b></div><div><small>مصدر التسجيل</small><b>${a.source === "dashboard" ? "لوحة الإدارة" : "تطبيق عميل · بانتظار تفعيلك"}</b></div><div><small>سلوك المحادثة</small><b>${modeLabel(a.settings.conversation_mode)}</b></div><div><small>المشروع الافتراضي</small><b>${esc((a.catalog.projects || []).find((p) => p.id === a.settings.project_id)?.name || (a.settings.project_id ? "مشروع محفوظ" : "خارج المشاريع"))}</b></div></div><div class="card-actions">${button("إدارة الحساب", "edit-account", "", `data-id="${a.id}"`)}${button(a.status === "connected" ? "تحديث الربط" : "ربط الحساب", "connect-account", "ghost", `data-id="${a.id}"`)}</div></article>`).join("")}<button class="add-card" data-action="add-account"><span class="add-icon">${icon("plus")}</span><b>أضف حسابًا إلى مساحتك</b><small>ChatGPT · Gemini · DeepSeek · Qwen</small></button></section>`
+    `<div class="toolbar"><span class="filter-note">${state.accounts.length} حساب · ${state.accounts.filter((a) => a.source.startsWith("client:")).length} مسجل من التطبيقات</span><span class="badge neutral">ENCRYPTED CREDENTIAL VAULT</span></div><section class="cards">${state.accounts.map((a) => `<article class="account-card"><div class="card-top">${logo(a.provider)}${badge(a)}</div><h2>${esc(a.label)}</h2><p>${esc(providers[a.provider].note)}</p><div class="card-details"><div><small>نماذج الحساب</small><b>${a.catalog.models?.length || "—"}</b></div><div><small>مصدر التسجيل</small><b>${a.source === "dashboard" ? "لوحة الإدارة" : "تطبيق عميل · بانتظار تفعيلك"}</b></div><div><small>سلوك المحادثة</small><b>${modeLabel(a.settings.conversation_mode)}</b></div><div><small>المشروع الافتراضي</small><b>${esc((a.catalog.projects || []).find((p) => p.id === a.settings.project_id)?.name || (a.settings.project_id ? "مشروع محفوظ" : "خارج المشاريع"))}</b></div></div><div class="card-actions">${button("إدارة الحساب", "edit-account", "", `data-id="${a.id}"`)}${button(a.status === "connected" ? "تحديث الربط" : "ربط الحساب", "connect-account", "ghost", `data-id="${a.id}"`)}</div></article>`).join("")}<button class="add-card" data-action="add-account"><span class="add-icon">${icon("plus")}</span><b>أضف حسابًا إلى مساحتك</b><small>حسابات الويب ومفاتيح API</small></button></section>`
   );
 }
 function modeLabel(mode) {
@@ -313,7 +333,7 @@ function keysPage() {
       "أنشئ مفتاحًا لكل تطبيق، وحدد النماذج المسموح له باستعمالها.",
       button("إنشاء مفتاح وصول", "add-key", "gold"),
     ) +
-    `<div class="help-box">مفتاح البروكسي يوضع في OpenMinis. توكن ChatGPT أو DeepSeek وكوكيز Gemini تُسجّل كحسابات في هذه اللوحة؛ لا تحتاج مشاركتها مع التطبيق.</div><section class="panel">${state.keys.length ? `<div class="table-wrap"><table><thead><tr><th>اسم العميل</th><th>المفتاح</th><th>النماذج المسموح بها</th><th>الحالة</th><th>التحكم</th></tr></thead><tbody>${state.keys.map((k) => `<tr><td>${esc(k.name)}</td><td class="key-prefix">${esc(k.prefix)}</td><td>${k.models.includes("*") ? "جميع النماذج" : esc(k.models.join("، "))}</td><td><span class="badge ${k.enabled ? "" : "disabled"}">${k.enabled ? "نشط" : "ملغى"}</span></td><td>${k.enabled ? `<button class="button danger" data-action="revoke-key" data-id="${k.id}">إلغاء المفتاح</button>` : "—"}</td></tr>`).join("")}</tbody></table></div>` : empty("ابدأ بمفتاح لـOpenMinis", "المفتاح الكامل يظهر مرة واحدة عند الإنشاء.")}</section>` +
+    `<div class="help-box">مفتاح البروكسي يوضع في OpenMinis. تُسجَّل مفاتيح المزوّدين وبيانات جلساتهم في لوحة الإدارة.</div><section class="panel">${state.keys.length ? `<div class="table-wrap"><table><thead><tr><th>اسم العميل</th><th>المفتاح</th><th>النماذج المسموح بها</th><th>الحالة</th><th>التحكم</th></tr></thead><tbody>${state.keys.map((k) => `<tr><td>${esc(k.name)}</td><td class="key-prefix">${esc(k.prefix)}</td><td>${k.models.includes("*") ? "جميع النماذج" : esc(k.models.join("، "))}</td><td><span class="badge ${k.enabled ? "" : "disabled"}">${k.enabled ? "نشط" : "ملغى"}</span></td><td>${k.enabled ? `<button class="button danger" data-action="revoke-key" data-id="${k.id}">إلغاء المفتاح</button>` : "—"}</td></tr>`).join("")}</tbody></table></div>` : empty("ابدأ بمفتاح لـOpenMinis", "المفتاح الكامل يظهر مرة واحدة عند الإنشاء.")}</section>` +
     connection()
   );
 }
@@ -370,7 +390,7 @@ function connectPage() {
       "اتصال واحد<span> لكل قدراتك.</span>",
       "إعدادات واضحة لـOpenMinis على iPhone وللتطبيقات التي تدعم OpenAI.",
     ) +
-    `<div class="docs-grid"><section class="panel"><div class="panel-heading"><h2>${icon("link")}الإعداد في OpenMinis</h2><span class="badge neutral">iOS</span></div><div class="panel-body"><ol class="steps"><li>اربط حسابًا من <b>الحسابات والمزوّدين</b>، واختر مشروع ChatGPT إن أردت إنشاء المحادثات داخله.</li><li>أنشئ مفتاحًا من <b>مفاتيح الوصول</b>، ثم أضف في OpenMinis مزوّدًا مخصصًا من نوع <b>OpenAI Compatible</b>.</li><li>ضع رابط Base URL التالي، والصق مفتاح البروكسي في API Key.</li><li>اجلب النماذج واختر اسم المسار الذي أعددته. استخدم <b>Chat Completions</b>، أو Responses API عند تفعيله صراحة في التطبيق.</li></ol><div class="code">${esc(location.origin)}/v1</div><div class="form-actions">${button("إنشاء مفتاح", "add-key", "gold")}${button("نسخ الرابط", "copy-endpoint", "ghost")}</div></div></section><section class="panel"><div class="panel-heading"><h2>${icon("route")}ما الذي يحدث للمحادثات؟</h2></div><div class="panel-body"><p class="lead">كل محادثة تطبيق جديدة تنشئ محادثة مستقلة لدى المزوّد، داخل مشروع ChatGPT المحدد. الطلبات التالية تستأنف عبر سجل الرسائل؛ لا نعتمد على أول رسالة نظام لربط الجميع معًا.</p><p class="lead">للتطبيقات التي تستطيع إرسال معرّف مستقل للمحادثة، استخدم الترويسة X-Conversation-ID. دونها نطابق التاريخ الكامل؛ إذا كان ملتبسًا نبدأ محادثة آمنة جديدة.</p><h3 class="section-title">الأدوات والمرفقات</h3><p class="lead">أدوات الوكيل تعمل بجسر نصي مع تحقق JSON Schema، وليست API أدوات أصلية لدى الحساب. الصور تُرسل بصيغة data URL. يدعم ChatGPT وGemini رفع الملفات؛ DeepSeek Telegram نصي.</p><h3 class="section-title">حسابات مسجلة من عميل</h3><p class="lead">يمكن لعميل مصرح له تسجيل توكن حساب عبر /v1/accounts/register. يظهر فورًا في لوحة الإدارة معطّلًا حتى تفعّله. لا نجمع ترويسات Bearer العشوائية ولا نكشف التوكنات في الردود.</p></div></section></div>` +
+    `<div class="docs-grid"><section class="panel"><div class="panel-heading"><h2>${icon("link")}الإعداد في OpenMinis</h2><span class="badge neutral">iOS</span></div><div class="panel-body"><ol class="steps"><li>اربط حسابًا من <b>الحسابات والمزوّدين</b>، واختر مشروع ChatGPT إن أردت إنشاء المحادثات داخله.</li><li>أنشئ مفتاحًا من <b>مفاتيح الوصول</b>، ثم أضف في OpenMinis مزوّدًا مخصصًا من نوع <b>OpenAI Compatible</b>.</li><li>ضع رابط Base URL التالي، والصق مفتاح البروكسي في API Key.</li><li>اجلب النماذج واختر اسم المسار الذي أعددته. استخدم <b>Chat Completions</b>، أو Responses API عند تفعيله صراحة في التطبيق.</li></ol><div class="code">${esc(location.origin)}/v1</div><div class="form-actions">${button("إنشاء مفتاح", "add-key", "gold")}${button("نسخ الرابط", "copy-endpoint", "ghost")}</div></div></section><section class="panel"><div class="panel-heading"><h2>${icon("route")}ما الذي يحدث للمحادثات؟</h2></div><div class="panel-body"><p class="lead">حسابات الويب تحفظ سياقًا لدى المزوّد عند إتاحته. يرسل OpenAI API وGemini API سجل الرسائل المقدم من التطبيق مع كل طلب.</p><p class="lead">للتطبيقات التي تستطيع إرسال معرّف مستقل للمحادثة، استخدم الترويسة X-Conversation-ID. دونها نطابق التاريخ الكامل؛ إذا كان ملتبسًا نبدأ محادثة آمنة جديدة.</p><h3 class="section-title">الأدوات والمرفقات</h3><p class="lead">أدوات الوكيل تعمل بجسر نصي مع تحقق JSON Schema، وليست API أدوات أصلية لدى الحساب. الصور تُرسل بصيغة data URL. دعم المرفقات يعتمد على المزوّد والنموذج. يدعم ChatGPT Guest وDeepSeek Telegram النص فقط.</p><h3 class="section-title">حسابات مسجلة من عميل</h3><p class="lead">يمكن لعميل مصرح له تسجيل توكن حساب عبر /v1/accounts/register. يظهر فورًا في لوحة الإدارة معطّلًا حتى تفعّله. لا نجمع ترويسات Bearer العشوائية ولا نكشف التوكنات في الردود.</p></div></section></div>` +
     connection()
   );
 }
@@ -393,7 +413,7 @@ function addAccount() {
   showModal(
     modalHead(
       "اربط حسابك.",
-      "اختر المزوّد والصق بيانات الدخول. نكتشف التفاصيل بدل أن تكتبها.",
+      "اختر المزوّد وأدخل بيانات الربط التي يطلبها.",
       "VAULT / NEW ACCOUNT",
     ) +
       `<form id="account-add-form"><div class="provider-options">${Object.entries(
@@ -405,7 +425,7 @@ function addAccount() {
         )
         .join(
           "",
-        )}</div><input type="hidden" name="provider" value="chatgpt"><label>اسم للحساب (اختياري)<input name="label" placeholder="مثل: حسابي الأساسي" maxlength="80"></label><label class="section-title">توكن الحساب أو الكوكيز<textarea name="credential" dir="ltr" required autocomplete="off" spellcheck="false" placeholder="الصق بيانات حسابك هنا"></textarea></label><p class="field-hint">ChatGPT وDeepSeek: توكن جلسة الحساب. Gemini: ترويسة كوكيز Google الكاملة. لا تستخدم مفتاح OpenAI API مع قالب ChatGPT.</p><div class="form-actions"><button class="button gold" type="submit">${icon("link")}حفظ وربط الحساب</button><button class="button ghost" type="button" data-action="close-modal">إلغاء</button></div></form>`,
+        )}</div><input type="hidden" name="provider" value="chatgpt"><label>اسم للحساب (اختياري)<input name="label" placeholder="مثل: حسابي الأساسي" maxlength="80"></label><div id="credential-fields"><label class="section-title"><span id="credential-label">توكن حساب ChatGPT</span><textarea name="credential" dir="ltr" required autocomplete="off" spellcheck="false"></textarea></label></div><p class="field-hint" id="credential-hint">أدخل توكن جلسة ChatGPT.</p><div class="form-actions"><button class="button gold" type="submit">${icon("link")}حفظ وربط الحساب</button><button class="button ghost" type="button" data-action="close-modal">إلغاء</button></div></form>`,
   );
 }
 function accountSettings(a, isRoute = false, config = {}) {
@@ -413,11 +433,15 @@ function accountSettings(a, isRoute = false, config = {}) {
   const catalog = a.catalog;
   const selectedModel = (catalog.models || []).find((m) => m.id === s.model);
   const gptMode = s.chatgpt_mode || selectedModel?.mode || "chat";
-  return `${a.provider === "chatgpt" ? `<div class="mode-card"><div class="mode-card-heading">${icon("chat")}<div><b>نوع محادثة ChatGPT</b><small>نوع المحادثة مستقل عن المشروع ومكان حفظها.</small></div></div><label>وضع ChatGPT<select name="chatgpt_mode">${(catalog.chatgpt_modes || [{ id: "chat", name: "دردشة عادية" }]).map((m) => `<option value="${esc(m.id)}" ${gptMode === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label><p class="field-hint">الدردشة العادية تشمل Auto وInstant وThinking. نماذج وضع العمل تظهر فقط عند اختيار وضع العمل.</p><label>بيئة أدوات الوكيل<select name="tool_environment"><option value="application" ${(s.tool_environment || "application") === "application" ? "selected" : ""}>أدوات التطبيق فقط · OpenMinis</option><option value="hybrid" ${s.tool_environment === "hybrid" ? "selected" : ""}>البيئتان · التطبيق وChatGPT</option></select></label><p class="field-hint">أدوات التطبيق: نوجّه الأوامر إلى جهازك ونحاول تصحيح المسار مرة واحدة عند استخدام أداة داخلية، ثم نعيد خطأ إذا لم يلتزم النموذج. البيئتان: نسمح بالعمل الداخلي المستقل مع تمييزه؛ الملفات لا تنتقل تلقائيًا بين البيئتين. يُطبّق عند إرسال التطبيق أدواته. ابدأ محادثة تطبيق جديدة بعد التغيير.</p></div>` : ""}<div class="form-grid"><label>النموذج الفعلي<select name="model">${a.provider === "chatgpt" ? gptModelOptions(a, s.model, gptMode) : `<option value="">اختيار الحساب الافتراضي</option>${options(catalog.models || [], s.model)}`}</select><span class="field-hint" id="model-explainer">${a.provider === "chatgpt" ? esc(gptModelNote(a, s.model, gptMode)) : ""}</span></label><label>سلوك المحادثة<select name="conversation_mode">${["automatic", "fixed", "per_request"].map((mode) => `<option value="${mode}" ${s.conversation_mode === mode ? "selected" : ""}>${modeLabel(mode)}</option>`).join("")}</select></label>${a.provider === "chatgpt" ? `<label class="full">مشروع ChatGPT<select name="project_id"><option value="">خارج المشاريع</option>${s.project_id && !(catalog.projects || []).some((p) => p.id === s.project_id) ? `<option value="${esc(s.project_id)}" selected>المشروع المحفوظ</option>` : ""}${options(catalog.projects || [], s.project_id)}</select></label><div class="full"><button class="button ghost" type="button" data-action="more-projects">تحديث / مزيد من المشاريع</button></div>` : ""}<label class="full">المحادثة المختارة (عند اختيار متابعة محادثة)<select name="conversation_id"><option value="">اختر محادثة من الحساب</option>${s.conversation_id ? `<option value="${esc(s.conversation_id)}" selected>المحادثة المحفوظة</option>` : ""}${options(catalog.chats || [], s.conversation_id, "id", "title")}</select><span class="field-hint">اختيار مشروع يجلب محادثاته تلقائيًا. إنشاء محادثة تطبيق جديدة يستعمل المشروع في الوضع التلقائي.</span></label><div class="full row-actions"><button class="button ghost" type="button" data-action="load-chats">جلب المحادثات</button><button class="button ghost" type="button" data-action="more-chats">مزيد من المحادثات</button><button class="button ghost" type="button" data-action="new-remote-chat">إنشاء محادثة</button></div></div>${
+  const hasRemoteChats = !providers[a.provider].noFixedChat;
+  const modes = hasRemoteChats ? ["automatic", "fixed", "per_request"] : ["automatic", "per_request"];
+  const canSetTemperature = ["deepseek", "gemini_api"].includes(a.provider);
+  const canSetOutputLimit = canSetTemperature || a.provider === "openai_api";
+  return `${a.provider === "chatgpt" ? `<div class="mode-card"><div class="mode-card-heading">${icon("chat")}<div><b>نوع محادثة ChatGPT</b><small>نوع المحادثة مستقل عن المشروع ومكان حفظها.</small></div></div><label>وضع ChatGPT<select name="chatgpt_mode">${(catalog.chatgpt_modes || [{ id: "chat", name: "دردشة عادية" }]).map((m) => `<option value="${esc(m.id)}" ${gptMode === m.id ? "selected" : ""}>${esc(m.name)}</option>`).join("")}</select></label><p class="field-hint">الدردشة العادية تشمل Auto وInstant وThinking. نماذج وضع العمل تظهر فقط عند اختيار وضع العمل.</p><label>بيئة أدوات الوكيل<select name="tool_environment"><option value="application" ${(s.tool_environment || "application") === "application" ? "selected" : ""}>أدوات التطبيق فقط · OpenMinis</option><option value="hybrid" ${s.tool_environment === "hybrid" ? "selected" : ""}>البيئتان · التطبيق وChatGPT</option></select></label><p class="field-hint">أدوات التطبيق: نوجّه الأوامر إلى جهازك ونحاول تصحيح المسار مرة واحدة عند استخدام أداة داخلية، ثم نعيد خطأ إذا لم يلتزم النموذج. البيئتان: نسمح بالعمل الداخلي المستقل مع تمييزه؛ الملفات لا تنتقل تلقائيًا بين البيئتين. يُطبّق عند إرسال التطبيق أدواته. ابدأ محادثة تطبيق جديدة بعد التغيير.</p></div>` : ""}<div class="form-grid"><label>النموذج الفعلي<select name="model">${a.provider === "chatgpt" ? gptModelOptions(a, s.model, gptMode) : `<option value="">اختيار الحساب الافتراضي</option>${options(catalog.models || [], s.model)}`}</select><span class="field-hint" id="model-explainer">${a.provider === "chatgpt" ? esc(gptModelNote(a, s.model, gptMode)) : ""}</span></label><label>سلوك المحادثة<select name="conversation_mode">${modes.map((mode) => `<option value="${mode}" ${s.conversation_mode === mode ? "selected" : ""}>${modeLabel(mode)}</option>`).join("")}</select></label>${a.provider === "chatgpt" ? `<label class="full">مشروع ChatGPT<select name="project_id"><option value="">خارج المشاريع</option>${s.project_id && !(catalog.projects || []).some((p) => p.id === s.project_id) ? `<option value="${esc(s.project_id)}" selected>المشروع المحفوظ</option>` : ""}${options(catalog.projects || [], s.project_id)}</select></label><div class="full"><button class="button ghost" type="button" data-action="more-projects">تحديث / مزيد من المشاريع</button></div>` : ""}${hasRemoteChats ? `<label class="full">المحادثة المختارة (عند اختيار متابعة محادثة)<select name="conversation_id"><option value="">اختر محادثة من الحساب</option>${s.conversation_id ? `<option value="${esc(s.conversation_id)}" selected>المحادثة المحفوظة</option>` : ""}${options(catalog.chats || [], s.conversation_id, "id", "title")}</select><span class="field-hint">اختيار مشروع يجلب محادثاته تلقائيًا. إنشاء محادثة تطبيق جديدة يستعمل المشروع في الوضع التلقائي.</span></label><div class="full row-actions"><button class="button ghost" type="button" data-action="load-chats">جلب المحادثات</button><button class="button ghost" type="button" data-action="more-chats">مزيد من المحادثات</button><button class="button ghost" type="button" data-action="new-remote-chat">إنشاء محادثة</button></div>` : ""}</div>${
     a.provider === "chatgpt"
       ? `<label class="section-title">مستوى التفكير<select name="reasoning_effort">${gptEffortOptions(a, s.model, s.reasoning_effort)}</select><span class="field-hint">تظهر المستويات التي يدعمها النموذج المحدد فقط.</span></label>`
       : ""
-  }${["deepseek", "qwen"].includes(a.provider) ? `<div class="form-grid section-title"><label class="toggle"><input type="checkbox" name="thinking_enabled" ${s.thinking_enabled ? "checked" : ""}><span>تفعيل التفكير</span></label><label class="toggle"><input type="checkbox" name="search_enabled" ${s.search_enabled ? "checked" : ""}><span>تفعيل البحث</span></label></div>` : ""}${a.provider === "gemini" && !isRoute ? `<label class="toggle section-title"><input type="checkbox" name="gemini_paragraph_mode" ${s.gemini_paragraph_mode ? "checked" : ""}><span>تقسيم الفصل وفحص الفقرات<small>اختياري لـGemini فقط، ويعمل على مسار نوعه «ترجمة فصول». المحادثة العادية والأدوات ترسل النص كاملًا دائمًا.</small></span></label>` : ""}<details><summary>ضبط التوليد المتقدم</summary><div class="form-grid"><label>Temperature<input type="number" name="temperature" min="0" max="2" step="0.1" value="${s.temperature ?? 0.7}" ${a.provider !== "deepseek" ? "disabled" : ""}></label><label>الحد الأقصى للتوكنات<input type="number" name="max_tokens" min="256" max="131072" step="1" value="${s.max_tokens || 16384}" ${a.provider !== "deepseek" ? "disabled" : ""}></label></div><p class="field-hint">هذه القيم تمرر لخدمة DeepSeek Telegram. بروتوكولا ChatGPT وGemini لا يثبتان دعم هذه المعاملات؛ لا نعرضها كقدرات قابلة للتغيير فيهما.</p></details>`;
+  }${["deepseek", "qwen"].includes(a.provider) ? `<div class="form-grid section-title"><label class="toggle"><input type="checkbox" name="thinking_enabled" ${s.thinking_enabled ? "checked" : ""}><span>تفعيل التفكير</span></label><label class="toggle"><input type="checkbox" name="search_enabled" ${s.search_enabled ? "checked" : ""}><span>تفعيل البحث</span></label></div>` : ""}${a.provider === "gemini" && !isRoute ? `<label class="toggle section-title"><input type="checkbox" name="gemini_paragraph_mode" ${s.gemini_paragraph_mode ? "checked" : ""}><span>تقسيم الفصل وفحص الفقرات<small>اختياري لـGemini فقط، ويعمل على مسار نوعه «ترجمة فصول». المحادثة العادية والأدوات ترسل النص كاملًا دائمًا.</small></span></label>` : ""}<details><summary>ضبط التوليد المتقدم</summary><div class="form-grid"><label>Temperature<input type="number" name="temperature" min="0" max="2" step="0.1" value="${s.temperature ?? 0.7}" ${canSetTemperature ? "" : "disabled"}></label><label>الحد الأقصى للتوكنات<input type="number" name="max_tokens" min="256" max="131072" step="1" value="${s.max_tokens || 16384}" ${canSetOutputLimit ? "" : "disabled"}></label></div><p class="field-hint">تُتاح الإعدادات التي يدعمها اتصال المزوّد.</p></details>`;
 }
 function gptModelOptions(a, selected, mode) {
   const values = (a.catalog.models || []).filter(
@@ -493,7 +517,7 @@ function editAccount(id) {
       esc(a.label),
       "الإعدادات الافتراضية لهذا الحساب. تستطيع تجاوزها لكل مسار نموذج مستقل.",
     ) +
-      `<form id="account-settings-form" data-id="${a.id}"><div class="form-grid"><label>اسم الحساب<input name="label" value="${esc(a.label)}" required maxlength="80"></label><label class="toggle"><input type="checkbox" name="enabled" ${a.enabled ? "checked" : ""}><span>تفعيل الحساب<small>الحسابات المسجلة من التطبيقات تحتاج تفعيلك أولًا.</small></span></label></div><h3 class="section-title">النماذج والمشروع والمحادثات</h3>${accountSettings(a)}${(a.catalog.warnings || []).map((w) => `<p class="help-box">${esc(w)}</p>`).join("")}<details><summary>تحديث التوكن أو الكوكيز</summary><label class="section-title">بيانات الدخول الجديدة<textarea name="credential" dir="ltr" autocomplete="off" spellcheck="false" placeholder="الصق بيانات الدخول الجديدة فقط عند تحديثها"></textarea></label><p class="field-hint">يحافظ التحديث على الحساب ومفاتيح العملاء، ويعيد ضبط ربط المشاريع والمحادثات لحماية السياق. اخترها مجددًا بعد الربط.</p><button class="button ghost" type="button" data-action="rotate-credential" data-id="${a.id}">تحديث وربط الحساب</button></details><div class="form-actions"><button class="button gold" type="submit">${icon("check")}حفظ إعدادات الحساب</button><button class="button ghost" type="button" data-action="connect-account" data-id="${a.id}">تحديث بيانات الحساب</button><button class="button danger" type="button" data-action="delete-account" data-id="${a.id}">حذف الحساب</button></div></form>`,
+      `<form id="account-settings-form" data-id="${a.id}"><div class="form-grid"><label>اسم الحساب<input name="label" value="${esc(a.label)}" required maxlength="80"></label><label class="toggle"><input type="checkbox" name="enabled" ${a.enabled ? "checked" : ""}><span>تفعيل الحساب<small>الحسابات المسجلة من التطبيقات تحتاج تفعيلك أولًا.</small></span></label></div><h3 class="section-title">النماذج والمشروع والمحادثات</h3>${accountSettings(a)}${(a.catalog.warnings || []).map((w) => `<p class="help-box">${esc(w)}</p>`).join("")}${a.provider === "chatgpt_guest" ? "" : `<details><summary>${providers[a.provider].apiKey ? "تحديث مفتاح API" : "تحديث التوكن أو الكوكيز"}</summary><label class="section-title">بيانات الدخول الجديدة<textarea name="credential" dir="ltr" autocomplete="off" spellcheck="false" placeholder="الصق بيانات الدخول الجديدة فقط عند تحديثها"></textarea></label><p class="field-hint">يحافظ التحديث على الحساب ومفاتيح العملاء، ويعيد ضبط ربط المشاريع والمحادثات لحماية السياق. اخترها مجددًا بعد الربط.</p><button class="button ghost" type="button" data-action="rotate-credential" data-id="${a.id}">تحديث وربط الحساب</button></details>`}<div class="form-actions"><button class="button gold" type="submit">${icon("check")}حفظ إعدادات الحساب</button><button class="button ghost" type="button" data-action="connect-account" data-id="${a.id}">تحديث بيانات الحساب</button><button class="button danger" type="button" data-action="delete-account" data-id="${a.id}">حذف الحساب</button></div></form>`,
   );
 }
 function editRoute(id = "") {
@@ -639,7 +663,24 @@ async function act(name, element) {
     return;
   }
   if (name === "choose-provider") {
-    $("#account-add-form").elements.provider.value = element.dataset.provider;
+    const form = $("#account-add-form");
+    const provider = element.dataset.provider;
+    const { credential } = form.elements;
+    if (form.elements.provider.value !== provider) credential.value = "";
+    form.elements.provider.value = provider;
+    const guest = provider === "chatgpt_guest";
+    const apiKey = providers[provider].apiKey;
+    $("#credential-fields").hidden = guest;
+    credential.disabled = guest;
+    credential.required = !guest;
+    $("#credential-label").textContent = apiKey
+      ? "مفتاح " + providers[provider].name
+      : provider === "gemini" ? "كوكيز Google" : "توكن حساب " + providers[provider].name;
+    $("#credential-hint").textContent = guest
+      ? "تعمل دردشة الضيف بدون بيانات دخول."
+      : apiKey ? "استخدم المفتاح الصادر من المزوّد."
+      : provider === "gemini" ? "أدخل ترويسة كوكيز Google الكاملة."
+      : "أدخل توكن جلسة الحساب.";
     $$(".provider-choice").forEach((e) =>
       e.setAttribute("aria-pressed", String(e === element)),
     );

@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 from cryptography.fernet import Fernet
 
+from .provider_types import PROVIDER_INFO
+
 
 class Store:
     def __init__(self, directory):
@@ -159,13 +161,7 @@ CREATE TABLE IF NOT EXISTS admin_sessions(hash TEXT PRIMARY KEY, expires REAL);
             (
                 aid,
                 provider,
-                label
-                or {
-                    "chatgpt": "ChatGPT",
-                    "gemini": "Gemini",
-                    "deepseek": "DeepSeek Telegram",
-                    "qwen": "Qwen",
-                }[provider],
+                label or PROVIDER_INFO[provider][0],
                 self.seal(credential),
                 fingerprint,
                 json.dumps(settings),

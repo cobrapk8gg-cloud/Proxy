@@ -5,7 +5,7 @@ import re
 import time
 import uuid
 from jsonschema import validate, ValidationError, SchemaError
-from .providers import ProviderError
+from .provider_types import ProviderError
 
 
 def content_text(content):
