@@ -8,9 +8,12 @@ import json
 import re
 import uuid
 from urllib.parse import quote, urljoin, urlparse
+
 import httpx
+
 from . import chatgpt_guest, official_apis
 from .chatgpt_models import model_catalog, select_model
+from .live import TextSnapshot
 from .provider_types import OFFICIAL_APIS, ProviderError
 
 WORKER = "https://deepseek-pow.contact-3mh.workers.dev"
@@ -427,7 +430,9 @@ class Providers:
                             else (
                                 3
                                 if 16 in tiers or 106 in flags
-                                else 2 if 8 in tiers or 19 in flags else 1
+                                else 2
+                                if 8 in tiers or 19 in flags
+                                else 1
                             )
                         )
                     )
@@ -439,7 +444,9 @@ class Providers:
                     ordinal = (
                         nested(m, 17)
                         if isinstance(nested(m, 17), int)
-                        else nested(m, 9) if isinstance(nested(m, 9), int) else 1
+                        else nested(m, 9)
+                        if isinstance(nested(m, 9), int)
+                        else 1
                     )
                     header = (
                         [
@@ -529,13 +536,13 @@ class Providers:
             response = await self.checked(
                 client,
                 "POST",
-                f'https://gemini.google.com/u/{session["index"]}/_/BardChatUi/data/batchexecute',
+                f"https://gemini.google.com/u/{session['index']}/_/BardChatUi/data/batchexecute",
                 headers=headers,
                 params={
                     "rpcids": rpcid,
                     "hl": "en",
                     "rt": "c",
-                    "source-path": f'/u/{session["index"]}/app',
+                    "source-path": f"/u/{session['index']}/app",
                     "bl": session["build"],
                     "f.sid": session["sid"],
                     "_reqid": str(uuid.uuid4().int % 900000 + 10000),
@@ -671,6 +678,7 @@ class Providers:
                         )
                     body["thinking_effort"] = effort
                 text = ""
+                snapshot = TextSnapshot()
                 finished = False
                 native_violation = False
                 try:
@@ -720,11 +728,13 @@ class Providers:
                             if (
                                 role != "assistant"
                                 or m.get("channel", "final") != "final"
+                                or native_call
                             ):
                                 continue
                             parts = nested(m, "content", "parts", default=[])
                             if any(isinstance(p, str) for p in parts):
                                 text = "".join(p for p in parts if isinstance(p, str))
+                                await snapshot.update(text)
                                 state["parent_message_id"] = m.get("id")
                             finished = (
                                 finished
@@ -836,10 +846,9 @@ class Providers:
                 0,
             ]
             async with self.client() as client:
-                response = await self.checked(
-                    client,
+                async with client.stream(
                     "POST",
-                    f'https://gemini.google.com/u/{session["index"]}/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate',
+                    f"https://gemini.google.com/u/{session['index']}/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate",
                     headers=headers,
                     params={
                         "bl": session["build"],
@@ -852,60 +861,69 @@ class Providers:
                         "at": session["csrf"],
                         "f.req": json.dumps([None, json.dumps(data)]),
                     },
-                )
-            self.rotate_cookies(session, response)
-            text = ""
-            for line in response.text.splitlines():
-                if not line.strip().startswith("["):
-                    continue
-                try:
-                    frames = json.loads(line)
-                except ValueError:
-                    raise ProviderError("تدفق Gemini غير مكتمل.") from None
-                for frame in frames:
-                    if not isinstance(frame, list):
-                        continue
-                    if frame[0] == "er":
-                        raise ProviderError("أبلغ Gemini عن خطأ في التوليد.")
-                    if not isinstance(nested(frame, 2), str):
-                        continue
-                    try:
-                        payload = json.loads(frame[2])
-                    except ValueError:
-                        continue
-                    if isinstance(nested(payload, 1), list):
-                        old = state.get("gemini_metadata", [])
-                        metadata = list(old)
-                        for index, value in enumerate(payload[1]):
-                            if index >= len(metadata):
-                                metadata.extend([None] * (index + 1 - len(metadata)))
-                            if value is not None:
-                                metadata[index] = value
-                        state["gemini_metadata"] = metadata
-                    if isinstance(nested(payload, 25), str) and payload[25]:
-                        state["at_token"] = payload[25]
-                    if nested(payload, 1, 0):
-                        if (
-                            state.get("conversation_id")
-                            and state["conversation_id"] != payload[1][0]
-                        ):
-                            raise ProviderError(
-                                "أعاد Gemini محادثة أخرى بدل متابعة المحادثة المختارة؛ لم نحفظ الربط البديل."
-                            )
-                        state["conversation_id"] = payload[1][0]
-                    if nested(payload, 1, 1):
-                        state["response_id"] = payload[1][1]
-                    if nested(payload, 4, 0, 0):
-                        state["choice_id"] = payload[4][0][0]
-                    if (
-                        isinstance(nested(payload, 4, 0, 1, 0), str)
-                        and payload[4][0][1][0]
-                    ):
-                        text = payload[4][0][1][0]
-                    if nested(payload, 3, "26") and not isinstance(
-                        nested(payload, 25), str
-                    ):
-                        state["at_token"] = payload[3]["26"]
+                ) as response:
+                    if response.status_code >= 400:
+                        raise ProviderError(
+                            f"رفض Gemini الطلب (HTTP {response.status_code}).",
+                            429 if response.status_code == 429 else 502,
+                        )
+                    self.rotate_cookies(session, response)
+                    text = ""
+                    snapshot = TextSnapshot()
+                    async for line in response.aiter_lines():
+                        if not line.strip().startswith("["):
+                            continue
+                        try:
+                            frames = json.loads(line)
+                        except ValueError:
+                            raise ProviderError("تدفق Gemini غير مكتمل.") from None
+                        for frame in frames:
+                            if not isinstance(frame, list):
+                                continue
+                            if frame[0] == "er":
+                                raise ProviderError("أبلغ Gemini عن خطأ في التوليد.")
+                            if not isinstance(nested(frame, 2), str):
+                                continue
+                            try:
+                                payload = json.loads(frame[2])
+                            except ValueError:
+                                continue
+                            if isinstance(nested(payload, 1), list):
+                                old = state.get("gemini_metadata", [])
+                                metadata = list(old)
+                                for index, value in enumerate(payload[1]):
+                                    if index >= len(metadata):
+                                        metadata.extend(
+                                            [None] * (index + 1 - len(metadata))
+                                        )
+                                    if value is not None:
+                                        metadata[index] = value
+                                state["gemini_metadata"] = metadata
+                            if isinstance(nested(payload, 25), str) and payload[25]:
+                                state["at_token"] = payload[25]
+                            if nested(payload, 1, 0):
+                                if (
+                                    state.get("conversation_id")
+                                    and state["conversation_id"] != payload[1][0]
+                                ):
+                                    raise ProviderError(
+                                        "أعاد Gemini محادثة أخرى بدل متابعة المحادثة المختارة؛ لم نحفظ الربط البديل."
+                                    )
+                                state["conversation_id"] = payload[1][0]
+                            if nested(payload, 1, 1):
+                                state["response_id"] = payload[1][1]
+                            if nested(payload, 4, 0, 0):
+                                state["choice_id"] = payload[4][0][0]
+                            if (
+                                isinstance(nested(payload, 4, 0, 1, 0), str)
+                                and payload[4][0][1][0]
+                            ):
+                                text = payload[4][0][1][0]
+                                await snapshot.update(text)
+                            if nested(payload, 3, "26") and not isinstance(
+                                nested(payload, 25), str
+                            ):
+                                state["at_token"] = payload[3]["26"]
             if not text.strip():
                 raise ProviderError("أعاد Gemini إجابة فارغة.")
             return text

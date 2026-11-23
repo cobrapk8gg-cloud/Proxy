@@ -5,10 +5,12 @@ import json
 import time
 import uuid
 from contextlib import asynccontextmanager
-from .protocol import canonical, prompt_for, parse_tools, completion, content_text
-from .provider_types import OFFICIAL_APIS, ProviderError
-from .chatgpt_models import select_model
+
 from jsonschema import Draft202012Validator, SchemaError
+
+from .chatgpt_models import select_model
+from .protocol import canonical, completion, content_text, parse_tools, prompt_for
+from .provider_types import OFFICIAL_APIS, ProviderError
 
 
 class Engine:
@@ -434,16 +436,22 @@ class Engine:
                         raise ProviderError(
                             "مسار الترجمة يحتاج نص الفصل في آخر رسالة مستخدم.", 400
                         )
-                    text = await translate(
-                        source,
-                        lambda value: self.providers.send(
-                            account,
-                            prompt.replace(source, value, 1),
-                            state,
-                            settings,
-                            attachments,
-                        ),
-                    )
+                    from .live import text_sink
+
+                    token = text_sink.set(None)
+                    try:
+                        text = await translate(
+                            source,
+                            lambda value: self.providers.send(
+                                account,
+                                prompt.replace(source, value, 1),
+                                state,
+                                settings,
+                                attachments,
+                            ),
+                        )
+                    finally:
+                        text_sink.reset(token)
                 else:
                     text = await self.providers.send(
                         account, prompt, state, settings, attachments

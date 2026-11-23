@@ -972,6 +972,9 @@ async def _qwen_stream_collect(
     client: httpx.AsyncClient,
 ) -> Tuple[str, Optional[str], bool]:
     url = f"{QWEN_BASE}/chat/completions"
+    from .live import text_sink
+
+    sink = text_sink.get()
     full_txt = ""
     resp_id: Optional[str] = None
     was_banned = False
@@ -1024,6 +1027,8 @@ async def _qwen_stream_collect(
                     content = delta.get("content", "")
                     if content:
                         full_txt += content
+                        if sink is not None:
+                            await sink(content)
                 except (json.JSONDecodeError, KeyError, IndexError):
                     continue
 

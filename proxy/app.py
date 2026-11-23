@@ -12,24 +12,26 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlparse
-from fastapi import FastAPI, Request, Depends, UploadFile, File, Form
+
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from .store import Store
-from .providers import Providers
-from .provider_types import NO_FIXED_CHAT, OFFICIAL_APIS, PROVIDER_INFO, ProviderError
-from .live import live_events
-from .engine import Engine
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
 from .chatgpt_models import select_model
+from .engine import Engine
+from .live import live_events
 from .protocol import (
     as_response,
-    response_messages,
     chat_chunks,
-    response_chunks,
     data_event,
+    response_chunks,
+    response_messages,
 )
+from .provider_types import NO_FIXED_CHAT, OFFICIAL_APIS, PROVIDER_INFO, ProviderError
+from .providers import Providers
+from .store import Store
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -864,11 +866,28 @@ def create_app(directory=None, providers=None):
         if data.get("stream", False):
 
             async def events():
-                if request_account["provider"] == "chatgpt_guest" and not response_api and not data.get("tools"):
-                    base = {"id": "chatcmpl-" + uuid.uuid4().hex, "created": int(time.time()),
-                            "model": data["model"], "object": "chat.completion.chunk"}
+                if not response_api and not data.get("tools"):
+                    base = {
+                        "id": "chatcmpl-" + uuid.uuid4().hex,
+                        "created": int(time.time()),
+                        "model": data["model"],
+                        "object": "chat.completion.chunk",
+                    }
+
                     def chunk(delta, finish=None):
-                        return data_event({**base, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
+                        return data_event(
+                            {
+                                **base,
+                                "choices": [
+                                    {
+                                        "index": 0,
+                                        "delta": delta,
+                                        "finish_reason": finish,
+                                    }
+                                ],
+                            }
+                        )
+
                     yield chunk({"role": "assistant"})
                     emitted = False
                     stream = live_events(generate)
@@ -882,13 +901,23 @@ def create_app(directory=None, providers=None):
                             else:
                                 choice = value["choices"][0]
                                 if not emitted and choice["message"].get("content"):
-                                    yield chunk({"content": choice["message"]["content"]})
+                                    yield chunk(
+                                        {"content": choice["message"]["content"]}
+                                    )
                                 yield chunk({}, choice["finish_reason"])
                                 if data.get("stream_options", {}).get("include_usage"):
-                                    yield data_event({**base, "choices": [], "usage": None})
+                                    yield data_event(
+                                        {**base, "choices": [], "usage": None}
+                                    )
                     except Exception as exc:
-                        message = exc.message if isinstance(exc, (ProviderError, ApiError)) else "تعذر إكمال التوليد."
-                        yield data_event({"error": {"message": message, "type": "upstream_error"}})
+                        message = (
+                            exc.message
+                            if isinstance(exc, (ProviderError, ApiError))
+                            else "تعذر إكمال التوليد."
+                        )
+                        yield data_event(
+                            {"error": {"message": message, "type": "upstream_error"}}
+                        )
                     finally:
                         await stream.aclose()
                     yield "data: [DONE]\n\n"

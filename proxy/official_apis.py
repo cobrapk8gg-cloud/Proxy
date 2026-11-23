@@ -1,8 +1,10 @@
 """OpenAI Responses and Google Gemini Developer API adapters."""
 
 import base64
+import json
 from urllib.parse import quote
 
+from .live import text_sink
 from .provider_types import ProviderError
 
 OPENAI = "https://api.openai.com/v1"
@@ -117,6 +119,67 @@ def upload(account, name, mime, data):
     }
 
 
+async def stream_json(client, url, headers, payload):
+    headers = {**headers, "Accept": "text/event-stream"}
+    async with client.stream("POST", url, headers=headers, json=payload) as response:
+        if response.status_code >= 400:
+            raise ProviderError(
+                f"رفض مزوّد API الطلب (HTTP {response.status_code}).",
+                429 if response.status_code == 429 else 502,
+            )
+        frame = []
+        async for line in response.aiter_lines():
+            if line.startswith("data:"):
+                frame.append(line[5:].lstrip(" "))
+            if not line and frame:
+                data = "\n".join(frame)
+                frame.clear()
+                if data == "[DONE]":
+                    break
+                try:
+                    yield json.loads(data)
+                except ValueError:
+                    raise ProviderError("أعاد مزوّد API حدث بث غير صالح.") from None
+
+
+async def stream_text(client, url, headers, payload, openai):
+    sink = text_sink.get()
+    text = []
+    finished = False
+    async for event in stream_json(client, url, headers, payload):
+        if event.get("error"):
+            raise ProviderError("أبلغ مزوّد API عن خطأ في البث.")
+        if openai:
+            kind = event.get("type")
+            if kind in ("error", "response.failed", "response.incomplete"):
+                raise ProviderError("لم يكتمل رد OpenAI API.")
+            finished |= kind == "response.completed"
+            delta = (
+                event.get("delta", "") if kind == "response.output_text.delta" else ""
+            )
+        else:
+            candidates = event.get("candidates") or []
+            if not candidates:
+                continue
+            candidate = candidates[0]
+            reason = candidate.get("finishReason")
+            if reason and reason != "STOP":
+                raise ProviderError("لم يكتمل رد Gemini API أو حُجب من المزوّد.")
+            finished |= reason == "STOP"
+            delta = "".join(
+                p.get("text", "")
+                for p in candidate.get("content", {}).get("parts", [])
+                if not p.get("thought")
+            )
+        if delta:
+            text.append(delta)
+            await sink(delta)
+    result = "".join(text)
+    if not finished or not result.strip():
+        raise ProviderError("انتهى تدفق مزوّد API قبل اكتمال الإجابة.")
+    return result
+
+
 async def send(client, checked, account, prompt, settings, attachments):
     model = settings.get("model") or account.get("catalog", {}).get("default_model")
     if not model:
@@ -144,6 +207,14 @@ async def send(client, checked, account, prompt, settings, attachments):
         }
         if limit is not None:
             payload["max_output_tokens"] = limit
+        if text_sink.get() is not None:
+            return await stream_text(
+                client,
+                OPENAI + "/responses",
+                headers,
+                {**payload, "stream": True},
+                True,
+            )
         data = (
             await checked(
                 client, "POST", OPENAI + "/responses", headers=headers, json=payload
@@ -168,16 +239,26 @@ async def send(client, checked, account, prompt, settings, attachments):
             generation["temperature"] = settings["temperature"]
         if limit is not None:
             generation["maxOutputTokens"] = limit
+        endpoint = GEMINI + "/models/" + quote(model, safe="")
+        payload = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": generation,
+        }
+        if text_sink.get() is not None:
+            return await stream_text(
+                client,
+                endpoint + ":streamGenerateContent?alt=sse",
+                headers,
+                payload,
+                False,
+            )
         data = (
             await checked(
                 client,
                 "POST",
-                GEMINI + "/models/" + quote(model, safe="") + ":generateContent",
+                endpoint + ":generateContent",
                 headers=headers,
-                json={
-                    "contents": [{"role": "user", "parts": parts}],
-                    "generationConfig": generation,
-                },
+                json=payload,
             )
         ).json()
         candidates = data.get("candidates") or []

@@ -36,3 +36,14 @@ SSE يحافظ على معرف ثابت للمخرجات ويعيد finish_reaso
 تنتهي ملفات الربط وResponses بعد 24 ساعة، وبيانات مطابقة المحادثات بعد 30 يومًا عند التنظيف؛ لا تُحذف المحادثات الأصلية من موقع المزوّد. `store:false` يمنع تخزين نص Responses الكامل محليًا، مع بقاء بصمة التاريخ وحالة الربط المشفرة اللازمة للاستمرار والمحادثة الأصلية لدى المزوّد.
 
 لا يوجد ضمان توافق مطلق مع كل تطبيق أو استمرار بروتوكولات الويب دون تغيير. قيود الاشتراك والحساب ومكافحة الروبوتات تبقى من جهة المزوّد.
+
+### Live text streaming
+
+For `POST /v1/chat/completions` with `stream: true` and no application tools,
+ChatGPT, ChatGPT Guest, Gemini Web, Qwen, OpenAI API and Gemini Developer API
+forward visible answer text as their upstream sends it. Completed responses
+still follow the existing conversation persistence path. Replayed idempotent
+requests, Gemini paragraph translation and DeepSeek Telegram can deliver the
+completed text in one event. The configured DeepSeek Telegram worker exposes
+the completed response as JSON. The Responses endpoint and application tool
+calls retain their existing framing.
