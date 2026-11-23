@@ -20,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from .store import Store
 from .providers import Providers
 from .provider_types import NO_FIXED_CHAT, OFFICIAL_APIS, PROVIDER_INFO, ProviderError
+from .live import live_events
 from .engine import Engine
 from .chatgpt_models import select_model
 from .protocol import (
@@ -863,6 +864,35 @@ def create_app(directory=None, providers=None):
         if data.get("stream", False):
 
             async def events():
+                if request_account["provider"] == "chatgpt_guest" and not response_api and not data.get("tools"):
+                    base = {"id": "chatcmpl-" + uuid.uuid4().hex, "created": int(time.time()),
+                            "model": data["model"], "object": "chat.completion.chunk"}
+                    def chunk(delta, finish=None):
+                        return data_event({**base, "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
+                    yield chunk({"role": "assistant"})
+                    emitted = False
+                    stream = live_events(generate)
+                    try:
+                        async for kind, value in stream:
+                            if kind == "heartbeat":
+                                yield ": keepalive\n\n"
+                            elif kind == "text":
+                                emitted = True
+                                yield chunk({"content": value})
+                            else:
+                                choice = value["choices"][0]
+                                if not emitted and choice["message"].get("content"):
+                                    yield chunk({"content": choice["message"]["content"]})
+                                yield chunk({}, choice["finish_reason"])
+                                if data.get("stream_options", {}).get("include_usage"):
+                                    yield data_event({**base, "choices": [], "usage": None})
+                    except Exception as exc:
+                        message = exc.message if isinstance(exc, (ProviderError, ApiError)) else "تعذر إكمال التوليد."
+                        yield data_event({"error": {"message": message, "type": "upstream_error"}})
+                    finally:
+                        await stream.aclose()
+                    yield "data: [DONE]\n\n"
+                    return
                 task = asyncio.create_task(generate())
                 try:
                     while not task.done():

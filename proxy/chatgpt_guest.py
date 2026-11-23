@@ -57,6 +57,10 @@ async def discover(client, checked):
 
 
 async def send(client, checked, prompt, state):
+    from .live import text_sink
+
+    sink = text_sink.get()
+    published = ""
     headers = session_headers(state)
     for cookie in state.get("guest_cookies", []):
         client.cookies.set(
@@ -129,6 +133,7 @@ async def send(client, checked, prompt, state):
                 if (
                     message.get("author", {}).get("role") != "assistant"
                     or message.get("channel", "final") != "final"
+                    or message.get("recipient") not in (None, "", "all")
                 ):
                     continue
                 text = "".join(
@@ -141,6 +146,13 @@ async def send(client, checked, prompt, state):
                     if mid:
                         parent = mid
                     messages[mid or "assistant"] = text
+                    if sink is not None:
+                        snapshot = "".join(dict.fromkeys(messages.values()))
+                        if not snapshot.startswith(published):
+                            raise ProviderError("غيّر المزوّد نصًا سبق بثه.")
+                        if len(snapshot) > len(published):
+                            await sink(snapshot[len(published):])
+                            published = snapshot
                 finished |= (
                     message.get("status") == "finished_successfully"
                     or message.get("end_turn") is True
