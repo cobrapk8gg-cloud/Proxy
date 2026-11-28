@@ -299,10 +299,23 @@ def create_app(directory=None, providers=None):
     async def register(data, source, enabled):
         provider = data.get("provider")
         credential = str(data.get("credential", "")).strip()
-        if provider not in ("chatgpt", "gemini", "deepseek", "qwen"):
+        if provider not in (
+            "chatgpt",
+            "gemini",
+            "deepseek",
+            "qwen",
+            "gemini-web",
+            "deepai",
+            "giga",
+        ):
             raise ApiError(400, "اختر مزوّدًا صالحًا.")
         if provider != "gemini":
             credential = re.sub(r"^Bearer\s+", "", credential, flags=re.I)
+        # مزوّدو الضيف يعملون بدون بيانات دخول؛ نولّد بصمة فريدة لكل حساب
+        # حتى لا تُدمج الحسابات في سجل واحد، والقيمة الملصوقة (مفتاح DeepAI
+        # أو _sm_sess لجيجا أو كوكيز Gemini Web) تُمرّر كما هي.
+        if provider in ("gemini-web", "deepai", "giga") and not credential:
+            credential = "guest-" + uuid.uuid4().hex[:12]
         if len(credential) < 6 or len(credential) > 131072:
             raise ApiError(400, "الصق توكن الحساب أو الكوكيز أولًا.")
         value = store.add_account(
@@ -348,6 +361,9 @@ def create_app(directory=None, providers=None):
                 "gemini": "gemini",
                 "deepseek": "deepseek-telegram",
                 "qwen": "qwen",
+                "gemini-web": "gemini-web",
+                "deepai": "deepai",
+                "giga": "giga",
             }[value["provider"]]
             if any(r["id"] == base for r in store.routes()):
                 base += "-" + aid[:6]
@@ -547,6 +563,9 @@ def create_app(directory=None, providers=None):
             store.run(f"DELETE FROM {table} WHERE account_id=?", (aid,))
         store.run("DELETE FROM idempotency")
         upstream.gemini_sessions.pop(aid, None)
+        guest = getattr(upstream, "guest", None)
+        if guest:
+            guest.clear(aid)
         store.event("credential_updated", aid)
         return {"ok": True}
 
@@ -557,6 +576,9 @@ def create_app(directory=None, providers=None):
             store.run(f"DELETE FROM {table} WHERE account_id=?", (aid,))
         store.run("DELETE FROM accounts WHERE id=?", (aid,))
         upstream.gemini_sessions.pop(aid, None)
+        guest = getattr(upstream, "guest", None)
+        if guest:
+            guest.clear(aid)
         store.event("account_deleted", aid)
         return {"ok": True}
 
@@ -597,7 +619,7 @@ def create_app(directory=None, providers=None):
             state,
             settings,
         )
-        if value["provider"] in ("gemini", "deepseek"):
+        if value["provider"] in ("gemini", "deepseek", "gemini-web", "giga", "deepai"):
             store.save_remote_state(aid, state)
         store.event("chat_created", aid)
         return {
@@ -926,10 +948,20 @@ def create_app(directory=None, providers=None):
     async def image_generation(request: Request, who=Depends(client)):
         data = await body(request)
         route, value = engine.resolve(data.get("model", "qwen"), who)
-        if value["provider"] != "qwen":
+        if value["provider"] not in ("qwen", "deepai"):
             raise ApiError(
                 400,
-                "Image generation is available only through the supplied Qwen image protocol.",
+                "Image generation is available only through the supplied Qwen image protocol or the DeepAI Pro key.",
+                "unsupported_feature",
+            )
+        if value["provider"] == "deepai" and (
+            data.get("n", 1) != 1
+            or data.get("response_format", "url") != "url"
+            or str(data.get("size", "1:1")) != "1:1"
+        ):
+            raise ApiError(
+                400,
+                "DeepAI image generation supports n=1, response_format=url, and the default size only.",
                 "unsupported_feature",
             )
         if data.get("n", 1) != 1 or data.get("response_format", "url") != "url":

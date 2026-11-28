@@ -227,7 +227,9 @@ class Engine:
             )
         if "enable_thinking" in body:
             settings["thinking_enabled"] = bool(body["enable_thinking"])
-        if account["provider"] in ("deepseek", "qwen") and body.get("reasoning_effort"):
+        if account["provider"] in ("deepseek", "qwen", "deepai", "giga") and body.get(
+            "reasoning_effort"
+        ):
             settings["thinking_enabled"] = body["reasoning_effort"] not in (
                 "none",
                 "off",
@@ -323,7 +325,13 @@ class Engine:
                     if fixed
                     else {}
                 )
-            if fixed and account["provider"] in ("gemini", "deepseek"):
+            if fixed and account["provider"] in (
+                "gemini",
+                "deepseek",
+                "gemini-web",
+                "giga",
+                "deepai",
+            ):
                 cached = self.store.remote_state(account["id"], fixed)
                 if cached:
                     state = cached
@@ -465,7 +473,13 @@ class Engine:
                         "native_tools_observed": native_observed,
                         "application_tool_calls": len(calls or []),
                     }
-                if account["provider"] in ("gemini", "deepseek"):
+                if account["provider"] in (
+                    "gemini",
+                    "deepseek",
+                    "gemini-web",
+                    "giga",
+                    "deepai",
+                ):
                     self.store.save_remote_state(account["id"], state)
                 self.store.run(
                     "INSERT INTO conversations VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET history_hash=excluded.history_hash,state=excluded.state,updated=excluded.updated",

@@ -19,6 +19,21 @@ const providers = {
     note: "جلسات الحساب · تفكير · بحث",
   },
   qwen: { name: "Qwen", mark: "Q", note: "محادثات · صور · أدوات" },
+  "gemini-web": {
+    name: "Gemini Web (بدون كوكيز)",
+    mark: "✧",
+    note: "بدون تسجيل دخول · نماذج ثابتة",
+  },
+  deepai: {
+    name: "DeepAI",
+    mark: "D",
+    note: "نماذج متعددة · بحث · صور Pro",
+  },
+  giga: {
+    name: "GigaChat",
+    mark: "G",
+    note: "جلسة ضيف · أوضاع تفكير وبحث",
+  },
 };
 const pages = [
   ["overview", "نظرة عامة", "grid"],
@@ -255,7 +270,7 @@ function accountsPage() {
       "الصق التوكن أو الكوكيز؛ يجلب البروكسي النماذج والمشاريع والمحادثات للاختيار.",
       button("ربط حساب جديد", "add-account", "gold"),
     ) +
-    `<div class="toolbar"><span class="filter-note">${state.accounts.length} حساب · ${state.accounts.filter((a) => a.source.startsWith("client:")).length} مسجل من التطبيقات</span><span class="badge neutral">ENCRYPTED CREDENTIAL VAULT</span></div><section class="cards">${state.accounts.map((a) => `<article class="account-card"><div class="card-top">${logo(a.provider)}${badge(a)}</div><h2>${esc(a.label)}</h2><p>${esc(providers[a.provider].note)}</p><div class="card-details"><div><small>نماذج الحساب</small><b>${a.catalog.models?.length || "—"}</b></div><div><small>مصدر التسجيل</small><b>${a.source === "dashboard" ? "لوحة الإدارة" : "تطبيق عميل · بانتظار تفعيلك"}</b></div><div><small>سلوك المحادثة</small><b>${modeLabel(a.settings.conversation_mode)}</b></div><div><small>المشروع الافتراضي</small><b>${esc((a.catalog.projects || []).find((p) => p.id === a.settings.project_id)?.name || (a.settings.project_id ? "مشروع محفوظ" : "خارج المشاريع"))}</b></div></div><div class="card-actions">${button("إدارة الحساب", "edit-account", "", `data-id="${a.id}"`)}${button(a.status === "connected" ? "تحديث الربط" : "ربط الحساب", "connect-account", "ghost", `data-id="${a.id}"`)}</div></article>`).join("")}<button class="add-card" data-action="add-account"><span class="add-icon">${icon("plus")}</span><b>أضف حسابًا إلى مساحتك</b><small>ChatGPT · Gemini · DeepSeek · Qwen</small></button></section>`
+    `<div class="toolbar"><span class="filter-note">${state.accounts.length} حساب · ${state.accounts.filter((a) => a.source.startsWith("client:")).length} مسجل من التطبيقات</span><span class="badge neutral">ENCRYPTED CREDENTIAL VAULT</span></div><section class="cards">${state.accounts.map((a) => `<article class="account-card"><div class="card-top">${logo(a.provider)}${badge(a)}</div><h2>${esc(a.label)}</h2><p>${esc(providers[a.provider].note)}</p><div class="card-details"><div><small>نماذج الحساب</small><b>${a.catalog.models?.length || "—"}</b></div><div><small>مصدر التسجيل</small><b>${a.source === "dashboard" ? "لوحة الإدارة" : "تطبيق عميل · بانتظار تفعيلك"}</b></div><div><small>سلوك المحادثة</small><b>${modeLabel(a.settings.conversation_mode)}</b></div><div><small>المشروع الافتراضي</small><b>${esc((a.catalog.projects || []).find((p) => p.id === a.settings.project_id)?.name || (a.settings.project_id ? "مشروع محفوظ" : "خارج المشاريع"))}</b></div></div><div class="card-actions">${button("إدارة الحساب", "edit-account", "", `data-id="${a.id}"`)}${button(a.status === "connected" ? "تحديث الربط" : "ربط الحساب", "connect-account", "ghost", `data-id="${a.id}"`)}</div></article>`).join("")}<button class="add-card" data-action="add-account"><span class="add-icon">${icon("plus")}</span><b>أضف حسابًا إلى مساحتك</b><small>ChatGPT · Gemini · Gemini Web · DeepSeek · Qwen · DeepAI · GigaChat</small></button></section>`
   );
 }
 function modeLabel(mode) {
@@ -405,7 +420,7 @@ function addAccount() {
         )
         .join(
           "",
-        )}</div><input type="hidden" name="provider" value="chatgpt"><label>اسم للحساب (اختياري)<input name="label" placeholder="مثل: حسابي الأساسي" maxlength="80"></label><label class="section-title">توكن الحساب أو الكوكيز<textarea name="credential" dir="ltr" required autocomplete="off" spellcheck="false" placeholder="الصق بيانات حسابك هنا"></textarea></label><p class="field-hint">ChatGPT وDeepSeek: توكن جلسة الحساب. Gemini: ترويسة كوكيز Google الكاملة. لا تستخدم مفتاح OpenAI API مع قالب ChatGPT.</p><div class="form-actions"><button class="button gold" type="submit">${icon("link")}حفظ وربط الحساب</button><button class="button ghost" type="button" data-action="close-modal">إلغاء</button></div></form>`,
+        )}</div><input type="hidden" name="provider" value="chatgpt"><label>اسم للحساب (اختياري)<input name="label" placeholder="مثل: حسابي الأساسي" maxlength="80"></label><label class="section-title">توكن الحساب أو الكوكيز<textarea name="credential" dir="ltr" required autocomplete="off" spellcheck="false" placeholder="الصق بيانات حسابك هنا"></textarea></label><p class="field-hint">ChatGPT وDeepSeek: توكن جلسة الحساب. Gemini: ترويسة كوكيز Google الكاملة. Gemini Web وGigaChat وDeepAI: البيانات اختيارية — اتركها فارغة لجلسة ضيف، أو الصق مفتاح DeepAI Pro أو قيمة _sm_sess لجيجا أو كوكيز Gemini Web. لا تستخدم مفتاح OpenAI API مع قالب ChatGPT.</p><div class="form-actions"><button class="button gold" type="submit">${icon("link")}حفظ وربط الحساب</button><button class="button ghost" type="button" data-action="close-modal">إلغاء</button></div></form>`,
   );
 }
 function accountSettings(a, isRoute = false, config = {}) {
@@ -417,7 +432,7 @@ function accountSettings(a, isRoute = false, config = {}) {
     a.provider === "chatgpt"
       ? `<label class="section-title">مستوى التفكير<select name="reasoning_effort">${gptEffortOptions(a, s.model, s.reasoning_effort)}</select><span class="field-hint">تظهر المستويات التي يدعمها النموذج المحدد فقط.</span></label>`
       : ""
-  }${["deepseek", "qwen"].includes(a.provider) ? `<div class="form-grid section-title"><label class="toggle"><input type="checkbox" name="thinking_enabled" ${s.thinking_enabled ? "checked" : ""}><span>تفعيل التفكير</span></label><label class="toggle"><input type="checkbox" name="search_enabled" ${s.search_enabled ? "checked" : ""}><span>تفعيل البحث</span></label></div>` : ""}${a.provider === "gemini" && !isRoute ? `<label class="toggle section-title"><input type="checkbox" name="gemini_paragraph_mode" ${s.gemini_paragraph_mode ? "checked" : ""}><span>تقسيم الفصل وفحص الفقرات<small>اختياري لـGemini فقط، ويعمل على مسار نوعه «ترجمة فصول». المحادثة العادية والأدوات ترسل النص كاملًا دائمًا.</small></span></label>` : ""}<details><summary>ضبط التوليد المتقدم</summary><div class="form-grid"><label>Temperature<input type="number" name="temperature" min="0" max="2" step="0.1" value="${s.temperature ?? 0.7}" ${a.provider !== "deepseek" ? "disabled" : ""}></label><label>الحد الأقصى للتوكنات<input type="number" name="max_tokens" min="256" max="131072" step="1" value="${s.max_tokens || 16384}" ${a.provider !== "deepseek" ? "disabled" : ""}></label></div><p class="field-hint">هذه القيم تمرر لخدمة DeepSeek Telegram. بروتوكولا ChatGPT وGemini لا يثبتان دعم هذه المعاملات؛ لا نعرضها كقدرات قابلة للتغيير فيهما.</p></details>`;
+  }${["deepseek", "qwen", "deepai"].includes(a.provider) ? `<div class="form-grid section-title"><label class="toggle"><input type="checkbox" name="thinking_enabled" ${s.thinking_enabled ? "checked" : ""}><span>تفعيل التفكير</span></label><label class="toggle"><input type="checkbox" name="search_enabled" ${s.search_enabled ? "checked" : ""}><span>تفعيل البحث</span></label></div>` : ""}${a.provider === "gemini" && !isRoute ? `<label class="toggle section-title"><input type="checkbox" name="gemini_paragraph_mode" ${s.gemini_paragraph_mode ? "checked" : ""}><span>تقسيم الفصل وفحص الفقرات<small>اختياري لـGemini فقط، ويعمل على مسار نوعه «ترجمة فصول». المحادثة العادية والأدوات ترسل النص كاملًا دائمًا.</small></span></label>` : ""}<details><summary>ضبط التوليد المتقدم</summary><div class="form-grid"><label>Temperature<input type="number" name="temperature" min="0" max="2" step="0.1" value="${s.temperature ?? 0.7}" ${a.provider !== "deepseek" ? "disabled" : ""}></label><label>الحد الأقصى للتوكنات<input type="number" name="max_tokens" min="256" max="131072" step="1" value="${s.max_tokens || 16384}" ${a.provider !== "deepseek" ? "disabled" : ""}></label></div><p class="field-hint">هذه القيم تمرر لخدمة DeepSeek Telegram. بروتوكولا ChatGPT وGemini لا يثبتان دعم هذه المعاملات؛ لا نعرضها كقدرات قابلة للتغيير فيهما.</p></details>`;
 }
 function gptModelOptions(a, selected, mode) {
   const values = (a.catalog.models || []).filter(
