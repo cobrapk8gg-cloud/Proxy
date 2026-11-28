@@ -6,6 +6,7 @@
 (الكود المرجعي كان يعطّلها لـGemini Web فقط، والبروكسي لا يعطّلها أبدًا).
 """
 
+import asyncio
 import json
 import random
 import re
@@ -156,6 +157,13 @@ def derive_auth_session_id(device_id):
     return f"{o[0:8]}-{o[8:12]}-{o[12:16]}-{o[16:20]}-{o[20:]}"
 
 
+def _valid_gemini_token(value):
+    """توكن إجراء حقيقي (حروف/أرقام/شرطات فقط). قيم الإعداد العامة مثل
+    «%.@.]» و«%.@.null,1000,2]» تُصادف بنفس المفاتيح وتجعل الطلبات
+    يفشلها الخادم، لذا تُرفض هنا بدل إرسالها."""
+    return bool(value) and bool(re.fullmatch(r"[A-Za-z0-9_\-]{10,}", value))
+
+
 def _is_guest_placeholder(credential):
     return not credential or credential.startswith("guest-")
 
@@ -262,23 +270,44 @@ class GuestProtocols:
         credential = account["credential"]
         if "=" in credential:
             headers["Cookie"] = credential
-        async with self.client(follow_redirects=True) as client:
-            response = await self.checked(
-                client, "GET", GEMINI_WEB_PAGE, headers=headers
-            )
-            cookies = {c.name: c.value for c in client.cookies.jar}
-        page = response.text
+        # جلب الصفحة مع محاولة ثانية واحدة عند رفض مؤقت من Google
+        # (429/5xx مثل 503) لأن جلب الصفحة GET آمن ولا يكرّر رسالة.
+        last_status = 0
+        for attempt in range(2):
+            async with self.client(follow_redirects=True) as client:
+                try:
+                    response = await self.checked(
+                        client, "GET", GEMINI_WEB_PAGE, headers=headers
+                    )
+                except ProviderError as exc:
+                    last_status = getattr(exc, "status", 0)
+                    if attempt == 0 and last_status in (429, 502, 503):
+                        await asyncio.sleep(2)
+                        continue
+                    raise ProviderError(
+                        "تعذّر جلب صفحة Gemini Web "
+                        + (
+                            f"(HTTP {last_status}) "
+                            if last_status in (429, 502, 503)
+                            else ""
+                        )
+                        + "— قد يكون Google يقيّد عنوان الخادم مؤقتًا؛ أعد المحاولة بعد لحظات."
+                    ) from None
+                page = response.text
+                cookies = {c.name: c.value for c in client.cookies.jar}
+            break
         at = None
         # الصفحة الجديدة لم تعد تحمل SNlM0e دائمًا؛ توكن الإجراء في uS02ke
-        # مع بدائل أخرى كما في الملف المرجعي.
+        # مع بدائل أخرى كما في الملف المرجعي، مع رفض قيم الإعداد العامة
+        # التالفة (مثل «%.@.]») التي تُفشل الطلبات لاحقًا.
         for key in GEMINI_WEB_TOKEN_KEYS:
             found = re.search(r'"%s":"([^"]{3,80})"' % key, page)
-            if found:
+            if found and _valid_gemini_token(found.group(1)):
                 at = found.group(1)
                 break
         if not at:
             raise ProviderError(
-                "لم يُعثر على توكن إجراء Gemini Web في الصفحة؛ أعد المحاولة لاحقًا."
+                "لم يُعثر على توكن إجراء Gemini Web صالح في الصفحة؛ أعد المحاولة لاحقًا."
             )
         fsid = re.search(r'"FdrFJe":"([\d-]+)"', page)
         session = {
@@ -292,23 +321,7 @@ class GuestProtocols:
         self.gemini_web_sessions[account["id"]] = session
         return session
 
-    async def gemini_web_send(self, account, prompt, state, settings):
-        model_x = GEMINI_WEB_MODELS[0][2]
-        if settings.get("model"):
-            selected = next(
-                (m for m in GEMINI_WEB_MODELS if m[0] == settings["model"]), None
-            )
-            if not selected:
-                raise ProviderError(
-                    "النموذج المحدد غير متاح في بروتوكول Gemini Web.", 400
-                )
-            model_x = selected[2]
-        session = await self.gemini_web_session(account)
-        headers = dict(GEMINI_WEB_HEADERS)
-        headers["x-goog-ext-525001261-jspb"] = model_x
-        cookies = self._gemini_web_cookies(account, session)
-        if cookies:
-            headers["Cookie"] = cookies
+    def _gemini_web_payload(self, prompt, state, at):
         if state.get("conversation_id"):
             context = [
                 state.get("conversation_id", ""),
@@ -338,6 +351,20 @@ class GuestProtocols:
             1,
             0,
         ]
+        return {"at": at, "f.req": json.dumps([None, json.dumps(data)])}
+
+    async def _gemini_web_stream_once(
+        self, account, prompt, state, settings, model_x, session, snapshot, timeout
+    ):
+        """طلب StreamGenerate واحد بقراءة متدفقة حقيقية: إطارات Google
+        تصل تراكميًا عبر chunked encoding، والنص ينمو في كل إطار، فيُبث
+        ما يصل لحظيًا عبر TextSnapshot بدل انتظار اكتمال الطلب."""
+        headers = dict(GEMINI_WEB_HEADERS)
+        headers["x-goog-ext-525001261-jspb"] = model_x
+        cookies = self._gemini_web_cookies(account, session)
+        if cookies:
+            headers["Cookie"] = cookies
+        body = self._gemini_web_payload(prompt, state, session["at"])
         params = {
             "bl": GEMINI_WEB_BUILD,
             "hl": "en",
@@ -346,51 +373,161 @@ class GuestProtocols:
         }
         if session["sid"]:
             params["f.sid"] = session["sid"]
-        async with self.client() as client:
-            response = await self.checked(
-                client,
-                "POST",
-                GEMINI_WEB_URL,
-                headers=headers,
-                params=params,
-                data={"at": session["at"], "f.req": json.dumps([None, json.dumps(data)])},
-            )
         text = ""
-        for line in response.text.splitlines():
-            if not line.strip():
-                continue
+        async with self.client() as client, client.stream(
+            "POST", GEMINI_WEB_URL, headers=headers, params=params, data=body, timeout=timeout
+        ) as response:
+            if response.status_code >= 400:
+                status = response.status_code
+                raise ProviderError(
+                    "رفض Gemini Web الطلب (HTTP "
+                    + str(status)
+                    + ")"
+                    + ("؛ الخدمة مشغولة مؤقتًا، أعد المحاولة بعد لحظات." if status in (429, 500, 502, 503) else "؛ تحقق من بيانات الحساب."),
+                    status if status in (429, 503) else 502,
+                )
+            buf_len = 0
             try:
-                frames = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(frames, list):
-                continue
-            for frame in frames:
-                if not isinstance(frame, list) or len(frame) < 3:
-                    continue
-                if frame[0] == "er":
-                    raise ProviderError("أبلغ Gemini Web عن خطأ في التوليد.")
-                if not isinstance(frame[2], str):
-                    continue
+                async for line in response.aiter_lines():
+                    line = line.strip()
+                    if not line or not line.startswith("["):
+                        continue
+                    # أخطاء Google الداخلية (مثل BardErrorInfo 1097) تصل في
+                    # إطار لا يحمل نص JSON قابلًا للتفسير، فتُفحص هنا مباشرة
+                    # لتفادي «إجابة فارغة» صامتة.
+                    if "BardErrorInfo" in line:
+                        code = re.search(r'BardErrorInfo",\s*\[(\d+)', line)
+                        raise ProviderError(
+                            "أبلغ Gemini Web عن خطأ داخلي"
+                            + (f" (رمز {code.group(1)})." if code else ".")
+                        )
+                    try:
+                        frames = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(frames, list):
+                        continue
+                    for frame in frames:
+                        if not isinstance(frame, list) or len(frame) < 3:
+                            continue
+                        if frame[0] == "er":
+                            code = frame[5] if len(frame) > 5 and isinstance(frame[5], int) else ""
+                            raise ProviderError(
+                                "أبلغ Gemini Web عن خطأ في التوليد"
+                                + (f" (رمز {code})." if code != "" else ".")
+                            )
+                        if not isinstance(frame[2], str):
+                            continue
+                        try:
+                            payload = json.loads(frame[2])
+                        except ValueError:
+                            continue
+                        if nested(payload, 1, 0):
+                            state["conversation_id"] = payload[1][0]
+                        if nested(payload, 1, 1):
+                            state["response_id"] = payload[1][1]
+                        if nested(payload, 4, 0, 0):
+                            state["choice_id"] = payload[4][0][0]
+                        value = nested(payload, 4, 0, 1, 0)
+                        if isinstance(value, str) and value:
+                            # الإطارات تراكمية؛ انشر الزيادة فقط إذا التزمت
+                            # بالبادئة المنشورة حتى لا يظهر نص مشوّه للعميل.
+                            if text and not value.startswith(text):
+                                continue
+                            text = value
+                            if len(text) > buf_len:
+                                await snapshot.update(text)
+                                buf_len = len(text)
+            except httpx.HTTPError:
+                raise ProviderError(
+                    "انقطع الاتصال بـ Gemini Web؛ لم نعد إرسال الرسالة تلقائيًا."
+                ) from None
+        return text
+
+    async def gemini_web_send(self, account, prompt, state, settings):
+        model_x = GEMINI_WEB_MODELS[0][2]
+        if settings.get("model"):
+            selected = next(
+                (m for m in GEMINI_WEB_MODELS if m[0] == settings["model"]), None
+            )
+            if not selected:
+                raise ProviderError(
+                    "النموذج المحدد غير متاح في بروتوكول Gemini Web.", 400
+                )
+            model_x = selected[2]
+        # مهلة أطول للبحث العميق وقد يستغرق دقائق.
+        timeout = httpx.Timeout(300, connect=30)
+        continuing = bool(state.get("conversation_id"))
+        session = await self.gemini_web_session(account)
+        # Google يرفض استمرار المحادثة بجلسة مختلفة عن التي أنشأتها
+        # (خطأ داخلي 1097)، فالجلسة المرتبطة بالمحادثة (توكن وكوكيز
+        # إنشائها) تُحفظ مع الحالة وتُعاد استخدامها في كل دورة.
+        bound = state.get("_gemini_session")
+        if (
+            continuing
+            and isinstance(bound, dict)
+            and bound.get("cookies")
+        ):
+            session = {
+                "at": bound.get("at") or session["at"],
+                "sid": bound.get("sid") or session["sid"],
+                "cookies": bound["cookies"],
+                "expires": 0,
+            }
+        snapshot = TextSnapshot()
+        try:
+            text = await self._gemini_web_stream_once(
+                account, prompt, state, settings, model_x, session, snapshot, timeout
+            )
+        except ProviderError:
+            # فشل قبل وصول أي نص للعميل: لا إعادة إذا سبق بث نص حتى لا
+            # يتكرر النص للعميل.
+            if snapshot.published != "":
+                raise
+            if continuing:
+                # جرّب الجلسة الحالية للحساب مرة واحدة؛ المحادثات القديمة
+                # المحفوظة قبل إضافة ربط الجلسة لا تحمل جلسة أصلية.
+                session = await self.gemini_web_session(account, refresh=True)
                 try:
-                    payload = json.loads(frame[2])
-                except ValueError:
-                    continue
-                if nested(payload, 1, 0):
-                    state["conversation_id"] = payload[1][0]
-                if nested(payload, 1, 1):
-                    state["response_id"] = payload[1][1]
-                if nested(payload, 4, 0, 0):
-                    state["choice_id"] = payload[4][0][0]
-                if (
-                    isinstance(nested(payload, 4, 0, 1, 0), str)
-                    and payload[4][0][1][0]
-                ):
-                    text = payload[4][0][1][0]
+                    text = await self._gemini_web_stream_once(
+                        account,
+                        prompt,
+                        state,
+                        settings,
+                        model_x,
+                        session,
+                        TextSnapshot(),
+                        timeout,
+                    )
+                except ProviderError as exc:
+                    raise ProviderError(
+                        "تعذّر استمرار محادثة Gemini Web: "
+                        + exc.message
+                        + " الجلسة التي أنشأت المحادثة لم تعد صالحة لدى Google؛ ابدأ محادثة جديدة."
+                    ) from None
+            else:
+                # محادثة جديدة: حدّث الجلسة (توكن وكوكيز جديدان) وأعد مرة
+                # واحدة فقط عند رفض مؤقت من Google.
+                session = await self.gemini_web_session(account, refresh=True)
+                text = await self._gemini_web_stream_once(
+                    account,
+                    prompt,
+                    state,
+                    settings,
+                    model_x,
+                    session,
+                    TextSnapshot(),
+                    timeout,
+                )
         if not text.strip():
-            raise ProviderError("أعاد Gemini Web إجابة فارغة.")
-        # بث النص الظاهر مباشرة قبل اكتمال الطلب، مثل بقية البروتوكولات.
-        await TextSnapshot().update(text)
+            raise ProviderError("أعاد Gemini Web إجابة فارغة؛ أعد المحاولة بعد لحظات.")
+        # احفظ الجلسة التي أنشأت/أكملت المحادثة مع الحالة لتستمر الدورات
+        # القادمة على الجلسة نفسها.
+        state["_gemini_session"] = {
+            "at": session["at"],
+            "sid": session["sid"],
+            "cookies": session["cookies"],
+        }
         return text
 
     # ------------------------------------------------------------ DeepAI
@@ -428,18 +565,49 @@ class GuestProtocols:
         credential = account["credential"]
         if not _is_guest_placeholder(credential):
             headers["api-key"] = credential
+        # بث حقيقي: استجابة DeepAI نص متدفق chunked ينمو لحظيًا؛ نقرأه
+        # بنمو ونبثه عبر TextSnapshot بدل انتظار اكتمال الطلب. مهلة أطول
+        # (300 ثانية) حتى تكتمل الردود الطويلة التي كانت تُقطع عند 180.
+        snapshot = TextSnapshot()
+        timeout = httpx.Timeout(300, connect=30)
+        body = ""
+        status = 0
         async with self.client() as client:
             # البوت المرجعي يقرأ نص استجابة أخطاء HTTP لكشف PAID/QUOTA؛
             # لا نستخدم checked هنا حتى لا يُرفع خطأ عام قبل فحص النص.
             try:
-                response = await client.request(
-                    "POST", DEEPAI_CHAT_URL, data=data, headers=headers
-                )
+                async with client.stream(
+                    "POST", DEEPAI_CHAT_URL, data=data, headers=headers, timeout=timeout
+                ) as response:
+                    status = response.status_code
+                    if status >= 400:
+                        body = (await response.aread()).decode("utf-8", "ignore")
+                    else:
+                        seen = ""
+                        published = 0
+                        async for chunk in response.aiter_text():
+                            seen += chunk
+                            # كشف أخطاء الحصة/المدفوع من أول وصول قبل
+                            # بث أي شيء للعميل، كما يفحص البوت المرجعي
+                            # النص الكامل.
+                            if any(mark in seen for mark in DEEPAI_PAID_MARKS):
+                                raise ProviderError(
+                                    "هذا النموذج مدفوع لدى DeepAI (Genius) ويحتاج مفتاح Pro في بيانات الحساب.",
+                                    402,
+                                )
+                            if any(mark in seen for mark in DEEPAI_QUOTA_MARKS):
+                                raise ProviderError(
+                                    "انتهت الحصة المجانية المؤقتة لدى DeepAI؛ أعد المحاولة لاحقًا أو أضف مفتاح Pro.",
+                                    429,
+                                )
+                            if len(seen) > published:
+                                await snapshot.update(seen)
+                                published = len(seen)
+                        body = seen
             except httpx.HTTPError:
                 raise ProviderError(
                     "انقطع الاتصال بـ DeepAI؛ لم نعد إرسال الرسالة تلقائيًا."
                 ) from None
-        body = response.text or ""
         if any(mark in body for mark in DEEPAI_PAID_MARKS):
             raise ProviderError(
                 "هذا النموذج مدفوع لدى DeepAI (Genius) ويحتاج مفتاح Pro في بيانات الحساب.",
@@ -450,15 +618,13 @@ class GuestProtocols:
                 "انتهت الحصة المجانية المؤقتة لدى DeepAI؛ أعد المحاولة لاحقًا أو أضف مفتاح Pro.",
                 429,
             )
-        if response.status_code >= 400:
+        if status >= 400:
             raise ProviderError(
-                f"رفض DeepAI الطلب (HTTP {response.status_code}).",
-                429 if response.status_code == 429 else 502,
+                f"رفض DeepAI الطلب (HTTP {status}).",
+                429 if status == 429 else 502,
             )
         if not body.strip():
             raise ProviderError("أعاد DeepAI إجابة فارغة.")
-        # بث النص الظاهر مباشرة قبل اكتمال الطلب، مثل بقية البروتوكولات.
-        await TextSnapshot().update(body)
         history.append({"role": "assistant", "content": body})
         state["deepai_history"] = history[-20:]
         state["conversation_id"] = state["session_uuid"]

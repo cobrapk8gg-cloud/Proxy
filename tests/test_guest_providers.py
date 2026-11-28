@@ -177,6 +177,136 @@ async def test_gemini_web_rejects_unknown_model_and_empty_reply():
         await p.send(acct("gemini-web"), "س", {}, {})
 
 
+@pytest.mark.asyncio
+async def test_gemini_web_binds_session_to_conversation_state():
+    """الجلسة التي أنشأت المحادثة تُحفظ مع الحالة وتُستخدم في الاستمرار؛
+    Google يرفض استمرار المحادثة بجلسة مختلفة (خطأ داخلي 1097)."""
+    cookies_seen = []
+
+    def capture(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("StreamGenerate"):
+            cookies_seen.append(request.headers.get("Cookie", ""))
+            return httpx.Response(200, text=GEMINI_STREAM)
+        return httpx.Response(
+            200, text=GEMINI_PAGE, headers={"Set-Cookie": "NID=nid-1; Path=/"}
+        )
+
+    p = make_providers()
+    p.transport = httpx.MockTransport(capture)
+    state = {}
+    await p.send(acct("gemini-web"), "أول", state, {})
+    assert "_gemini_session" in state
+    assert state["_gemini_session"]["cookies"]
+    first_cookie = cookies_seen[0]
+    await p.send(acct("gemini-web"), "ثاني", state, {})
+    # الدورة الثانية تستخدم كوكيز الجلسة المرتبطة بالمحادثة نفسها.
+    assert cookies_seen[1] == first_cookie
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_reports_bard_error_info_instead_of_empty():
+    error_stream = (
+        ")]}'\n\n"
+        + json.dumps(
+            [
+                [
+                    "wrb.fr",
+                    None,
+                    None,
+                    None,
+                    None,
+                    [
+                        13,
+                        None,
+                        [
+                            [
+                                "type.googleapis.com/assistant.boq.bard.application.BardErrorInfo",
+                                [1097, None],
+                            ]
+                        ],
+                    ],
+                ]
+            ]
+        )
+        + "\n"
+    )
+    attempts = {"n": 0}
+
+    def failing(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("StreamGenerate"):
+            attempts["n"] += 1
+            return httpx.Response(200, text=error_stream)
+        return httpx.Response(200, text=GEMINI_PAGE)
+
+    p = make_providers()
+    p.transport = httpx.MockTransport(failing)
+    p.guest.gemini_web_sessions.clear()
+    with pytest.raises(ProviderError) as exc:
+        await p.send(acct("gemini-web"), "س", {}, {})
+    assert "1097" in exc.value.message
+    # محاولة واحدة بالجلسة الأصلية وأخرى بالجلسة المحدّثة فقط.
+    assert attempts["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_upstream_503_surfaces_clear_error():
+    def unavailable(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("StreamGenerate"):
+            return httpx.Response(503, text="overloaded")
+        return httpx.Response(200, text=GEMINI_PAGE)
+
+    p = make_providers()
+    p.transport = httpx.MockTransport(unavailable)
+    p.guest.gemini_web_sessions.clear()
+    with pytest.raises(ProviderError) as exc:
+        await p.send(acct("gemini-web"), "س", {}, {})
+    assert "HTTP 503" in exc.value.message
+    assert exc.value.status == 503
+
+
+@pytest.mark.asyncio
+async def test_gemini_web_streams_cumulative_frames_live():
+    """الإطارات التراكمية تُبث فور وصولها: عميل البث يستقبل الزيادات
+    لحظيًا قبل اكتمال الطلب."""
+    frame1 = json.dumps(GEMINI_PAYLOAD)
+    payload_short = [
+        None,
+        ["conv-web-1", "resp-web-1"],
+        None,
+        None,
+        [["choice-web-1", ["مرحبا من"]]],
+    ]
+    stream = (
+        ")]}'\n\n"
+        + json.dumps([["wrb.fr", None, json.dumps(payload_short)]])
+        + "\n\n"
+        + json.dumps([["wrb.fr", None, frame1]])
+        + "\n"
+    )
+    p = make_providers()
+    p.transport = httpx.MockTransport(
+        lambda request: (
+            httpx.Response(200, text=stream)
+            if request.url.path.endswith("StreamGenerate")
+            else httpx.Response(200, text=GEMINI_PAGE)
+        )
+    )
+    p.guest.gemini_web_sessions.clear()
+    from proxy.live import live_events
+
+    chunks = []
+
+    async def generate():
+        return await p.send(acct("gemini-web"), "مرحبا", {}, {"model": "gemini-3.5-flash"})
+
+    async for kind, value in live_events(generate):
+        if kind == "text":
+            chunks.append(value)
+    assert "".join(chunks) == "مرحبا من Gemini Web"
+    # أول زيادة وصلت قبل الاكتمال (إطار منفصل)، وليست كتلة واحدة نهائية.
+    assert len(chunks) >= 2
+
+
 # ---------------------------------------------------------------- DeepAI
 @pytest.mark.asyncio
 async def test_deepai_send_form_fields_and_history_state():
