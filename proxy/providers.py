@@ -32,6 +32,11 @@ class Providers:
     def __init__(self, transport=None):
         self.transport = transport
         self.gemini_sessions = {}
+        # مزوّدو الضيف المضافون (Gemini Web وDeepAI وGigaChat)؛ إضافة منفصلة
+        # لا تمس بروتوكولات الحسابات الأصلية.
+        from .guest_providers import GuestProtocols
+
+        self.guest = GuestProtocols(self)
 
     def client(self, **kw):
         return httpx.AsyncClient(
@@ -123,6 +128,8 @@ class Providers:
 
     async def discover(self, account):
         provider = account["provider"]
+        if provider in ("gemini-web", "deepai", "giga"):
+            return await self.guest.discover(account)
         if provider in OFFICIAL_APIS:
             async with self.client() as client:
                 return await official_apis.discover(client, self.checked, account)
@@ -356,6 +363,8 @@ class Providers:
             if not rid or not choice:
                 raise ProviderError("تعذر جلب معلومات متابعة محادثة Gemini.")
             return {"conversation_id": cid, "response_id": rid, "choice_id": choice}
+        if account["provider"] in ("gemini-web", "deepai", "giga"):
+            return await self.guest.conversation(account, cid)
         for chat in (await self.chats(account))["items"]:
             if chat["id"] == cid:
                 return {
@@ -577,6 +586,8 @@ class Providers:
     async def send(self, account, prompt, state, settings, attachments=None):
         provider = account["provider"]
         attachments = attachments or []
+        if provider in ("gemini-web", "deepai", "giga"):
+            return await self.guest.send(account, prompt, state, settings, attachments)
         if provider in OFFICIAL_APIS:
             async with self.client() as client:
                 return await official_apis.send(
@@ -1022,6 +1033,8 @@ class Providers:
             return text
 
     async def image(self, account, prompt, size):
+        if account["provider"] in ("gemini-web", "deepai", "giga"):
+            return await self.guest.image(account, prompt, size)
         from . import legacy_qwen as qwen
 
         proxy_url = (

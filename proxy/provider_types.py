@@ -8,6 +8,11 @@ PROVIDER_INFO = {
     "chatgpt_guest": ("ChatGPT Guest", "gpt-guest"),
     "openai_api": ("OpenAI API", "openai-api"),
     "gemini_api": ("Gemini API", "gemini-api"),
+    # مزوّدو الضيف المضافون (Gemini Web وDeepAI وGigaChat)؛ إضافة منفصلة
+    # لا تمس بروتوكولات الحسابات الأصلية أعلاه.
+    "gemini-web": ("Gemini Web", "gemini-web"),
+    "deepai": ("DeepAI", "deepai"),
+    "giga": ("GigaChat", "giga"),
 }
 
 OFFICIAL_APIS = frozenset(("openai_api", "gemini_api"))
